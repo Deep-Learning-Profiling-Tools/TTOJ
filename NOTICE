@@ -1,0 +1,108 @@
+TTOJ
+====
+
+Copyright (c) 2026 TTOJ contributors.
+Source: https://github.com/gujialiang123/TTOJ
+
+Unless a file or the third-party notices below specify otherwise, original
+TTOJ source code and documentation are licensed under the GNU Affero General
+Public License, version 3 or (at your option) any later version
+(SPDX-License-Identifier: AGPL-3.0-or-later). The complete version 3 license
+is provided in LICENSE. This default does not replace licenses or copyright
+notices attached to third-party code, adapted files, or separately obtained
+dependencies. In particular, files already marked Apache-2.0 retain that
+license.
+
+Hydro
+-----
+
+Upstream: https://github.com/hydro-dev/Hydro
+Authors: Hydro developers and contributors.
+
+The site integrates the following separately installed upstream packages:
+
+  hydrooj 5.0.7: AGPL-3.0-or-later OR Proprietary
+  @hydrooj/ui-default 4.58.5: AGPL-3.0
+  @hydrooj/framework: MIT (an underlying framework dependency)
+
+TTOJ uses the open-source AGPL option for hydrooj; this repository does not
+grant or include an alternative proprietary authorization from Hydro.
+The MIT license of the underlying framework does not change the licenses
+of hydrooj or its default UI. Upstream package license and copyright
+notices remain applicable to those packages and their dependencies.
+
+The site/tt-site package declares AGPL-3.0-or-later. Its Hydro-derived
+templates, including problem lists, domain dashboards, record displays,
+navigation and footer overrides, retain the upstream UI's AGPL terms.
+Changes adapt these templates for Tenstorrent problems, language selection,
+administrator-controlled access, and profiling reports. The plugin also
+extends Hydro's native record handler. These modifications are included
+in this repository; the unmodified upstream packages are obtained by the
+versioned installation commands in site/Dockerfile.
+
+Tenstorrent TT-Metal / Metalium
+------------------------------
+
+Upstream: https://github.com/tenstorrent/tt-metal
+SDK version used by the sandbox: 0.79.0.
+Profiler SDK source revision:
+  de546d3b146758714d900f11b218c8f9c805f410
+
+The following files retain their Apache License, Version 2.0 terms:
+
+  sandbox/metalium/judge-riscv.cpp
+    Adapted from add_2_integers_in_riscv.
+    Copyright 2025 Tenstorrent USA, Inc. (upstream example).
+
+  sandbox/metalium/judge-compute.cpp
+    Adapted from add_2_integers_in_compute.
+    Copyright 2024 Tenstorrent USA, Inc. (upstream example).
+
+  sandbox/metalium/kernels/reader_binary_1_tile.cpp
+  sandbox/metalium/kernels/writer_1_tile.cpp
+    Official example kernels, with their existing upstream notices.
+    Copyright 2025 Tenstorrent USA, Inc.
+
+  problems/metalium-compute/accepted.cpp
+    Official add_2_integers_in_compute example kernel.
+    Copyright 2025 Tenstorrent USA, Inc.
+
+  problems/metalium-riscv/accepted.cpp
+  problems/metalium-riscv/wrong.cpp
+    Official add_2_integers_in_riscv example kernel and a deliberately
+    incorrect variant that substitutes subtraction for addition.
+    Copyright 2024 Tenstorrent USA, Inc.
+
+  sandbox/metalium/profiling.hpp
+    Apache-2.0, as declared by the file's SPDX license identifier.
+
+  diagnostics/four-device-parallel/host.cpp
+  diagnostics/four-device-parallel/kernel.cpp
+    TTOJ diagnostic code, explicitly Apache-2.0 as declared by the files'
+    SPDX license identifiers.
+
+The example adaptations add the fixed judging interface, validation,
+benchmark/profiler passes, and TTOJ result metadata. Apache-licensed files
+and their modifications are not relicensed by the repository default.
+The profiler SDK source is obtained from the pinned public upstream
+revision by profiling-build/build.sh; downloaded source and research
+copies are not published as part of this repository.
+The complete Apache license is in LICENSES/Apache-2.0.txt. The upstream
+TT-Metal NOTICE and clarification are preserved verbatim in
+LICENSES/Tenstorrent-NOTICE.txt and
+LICENSES/Tenstorrent-LICENSE-understanding.txt. The upstream NOTICE also
+describes dependencies of TT-Metal itself; their source is not thereby
+included in this repository.
+
+Other runtime dependencies
+--------------------------
+
+Container images and package managers obtain additional independent
+software, including Node.js, Python, MongoDB, aiohttp, the Docker Python
+SDK, TTNN, Metalium, and SDK build/runtime dependencies. Their own licenses
+and notices remain applicable. Runtime installation instructions do not
+relicense those packages. This repository does not bundle their binaries
+under the TTOJ license.
+
+Hydro and Tenstorrent names identify upstream software and hardware.
+No endorsement by either upstream project is implied.

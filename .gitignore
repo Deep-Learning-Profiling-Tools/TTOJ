@@ -1,0 +1,40 @@
+# Credentials and local deployment configuration.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+deployment/*.service
+
+# Accounts, submissions, profiles, experiment exports and generated checks.
+/data/
+/*validation*.json
+/test-results*.json
+__pycache__/
+*.py[cod]
+*.log
+
+# Downloaded SDK sources and build products are recreated by build.sh.
+/profiling-build/tt-metal/
+/profiling-build/build/
+/profiling-build/install/
+/profiling-build/wheels/
+/profiling-build/results/
+/profiling-build/judge-src/
+/profiling-build/judge-kernels/
+/profiling-build/judge-entrypoint.sh
+/profiling-build/build_metal.reference.sh
+/sandbox/metalium/mpi/
+/sandbox/metalium/profiler-research/
+/sandbox/metalium/probe-*/
+/sandbox/metalium/*sample.json
+/sandbox/metalium/*check.json
+/sandbox/metalium/*validation.json
+/diagnostics/**/result.json
+
+# Editor files and local publication staging.
+.DS_Store
+.idea/
+.vscode/

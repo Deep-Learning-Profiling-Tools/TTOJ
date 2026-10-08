@@ -1,0 +1,21 @@
+{
+  "sdk_version": "0.79.0",
+  "source": "https://github.com/tenstorrent/tt-metal",
+  "source_tag": "v0.79.0",
+  "source_commit": "de546d3b146758714d900f11b218c8f9c805f410",
+  "tracy_commit": "9c3ca7e5fe48cecf90aa518c82552aae706cf110",
+  "umd_commit": "f9173df20bec9bb93e5c92407e701e604ddef33d",
+  "base_image": "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-amd64@sha256:ed828284c1b95eaaaac784aa777df16338d3788baa6af971c13aa4789fb75b5c",
+  "sfpi_version": "7.78.0[935]",
+  "python_version": "3.10.19",
+  "compiler": "clang++-20",
+  "build_type": "Release",
+  "enable_tracy": true,
+  "enable_distributed": true,
+  "with_python_bindings": true,
+  "enable_light_metal_trace": false,
+  "device_profiler_default": false,
+  "device_csv_path": "/tmp/generated/profiler/.logs/profile_log_device.csv",
+  "device_frequency_source": "UMD get_device_aiclk, queried by profiler initialization",
+  "source_modified": false
+}

@@ -1,0 +1,524 @@
+{
+  "schema_version": "tt-oj.problem-candidates.v1",
+  "researched_at_utc": "2026-10-02",
+  "purpose": "Candidate research only; no new benchmark tasks published by this catalog",
+  "target": {
+    "cards": "2 x Tenstorrent p300c",
+    "architecture": "Blackhole",
+    "asics": 4,
+    "current_job_device": 0,
+    "tt_metal_commit": "de546d3b146758714d900f11b218c8f9c805f410",
+    "runtime_series": "0.79.0",
+    "sfpi_runtime": "7.78.0",
+    "kmd": "2.10.0",
+    "firmware": "19.13.1"
+  },
+  "license": {
+    "tt_metal": "Apache-2.0",
+    "tt_train": "Apache-2.0",
+    "license_url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/LICENSE",
+    "notice_url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/NOTICE",
+    "note": "Preserve applicable source headers, Apache LICENSE, applicable NOTICE, and modification attribution; third-party libraries/checkpoints/datasets may have different terms."
+  },
+  "candidates": [
+    {
+      "candidate_id": "C01",
+      "priority": "P0",
+      "title": "Residual add + ReLU",
+      "interface": "ttnn",
+      "runner_requirement": "existing_two_tensor_contract",
+      "semantics": "relu(a+b)",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/eltwise/test_binary_category1_bfloat16.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/eltwise/test_binary_category1_bfloat16.py",
+          "sha256": "01c5ab18d41c29a1f70edd47c75ac61ebf60cf65a9a22522233e4a2717053467",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tests/ttnn/unit_tests/operations/eltwise/test_unary_activation.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/eltwise/test_unary_activation.py",
+          "sha256": "32ac855e06bb6b2012d1e6748263816c2fd212069ca3f9e29ec9d5517489d6b1",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "32x32",
+        "32x256",
+        "64x256"
+      ],
+      "dtype_and_edge_cases": "BF16, TILE; signed inputs, zeros, near-zero values; same input shapes initially",
+      "correctness_policy_to_calibrate": "BF16-quantized inputs; FP32 reference relu(a+b); freeze absolute/relative bounds after device baseline calibration",
+      "baseline_to_validate": "ttnn.relu(ttnn.add(a,b)); compare supported fused activation path separately",
+      "compatibility_caveat": "Two inputs fit current solve(a,b); fused baseline API must be inspected and run. Broadcast variants need separately validated shapes. Larger shapes also require solving the current stdout/JSON output-size limit.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C02",
+      "priority": "P0",
+      "title": "GEMM shape and aspect-ratio suite",
+      "interface": "ttnn",
+      "runner_requirement": "existing_two_tensor_contract",
+      "semantics": "a @ b",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/matmul/test_matmul.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/matmul/test_matmul.py",
+          "sha256": "dd31fd07620f9e7b33aea75793547ea20328f2c14314acde2fcc39063c677523",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tech_reports/GEMM_FLOPS/GEMM_FLOPS.md",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tech_reports/GEMM_FLOPS/GEMM_FLOPS.md",
+          "sha256": "ea27f68ffc6d1e9fde5e7472444ccfd0560fb6a2af2a0cbfc67169e02d704b4e",
+          "spdx_header": null
+        }
+      ],
+      "suggested_shapes": [
+        "M,K,N=32,32,32",
+        "256,256,256",
+        "32,1024,256",
+        "256,64,1024"
+      ],
+      "dtype_and_edge_cases": "BF16, TILE; finite signed values, cancellation, zeros; start multiples of 32",
+      "correctness_policy_to_calibrate": "Reference on quantized inputs with FP32 accumulation; tolerance per K/fidelity; record max abs, max rel and normalized error",
+      "baseline_to_validate": "ttnn.matmul default config; later tuned program-config baseline",
+      "compatibility_caveat": "Current runner fits. Irregular dimensions, larger output volumes and optional output tensors need validation; existing 256 KiB stdout limit prevents indiscriminate large JSON tensors. Official report P150 13x10 results are not this P300c result.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C03",
+      "priority": "P1",
+      "title": "Transpose / layout conversion",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "transpose last two axes",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/data_movement/test_permute.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/data_movement/test_permute.py",
+          "sha256": "29e47b891d958a4b8e355a2144b0538f21862603b773af3bbe3ff9216c80fd7d",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tests/ttnn/unit_tests/base_functionality/test_reshape_transpose.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/base_functionality/test_reshape_transpose.py",
+          "sha256": "4208c2d04b74a2d100269b2473c8facfa658034b0d33c5154e7ed2f8abb15020",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1x1x32x64",
+        "1x2x64x128",
+        "1x1x33x65"
+      ],
+      "dtype_and_edge_cases": "BF16 initially; TILE -> TILE; later ROW_MAJOR as a distinct track",
+      "correctness_policy_to_calibrate": "Exact equality of logical values after initial BF16 quantization; verify shape and poisoned padding exclusion",
+      "baseline_to_validate": "ttnn.permute / ttnn.transpose from matching pinned API",
+      "compatibility_caveat": "Use a unary input contract instead of supplying an unused b. Pinned permute source includes a Blackhole-specific padding branch; source presence does not imply all paths pass.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C04",
+      "priority": "P1",
+      "title": "Row sum / mean reduction",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "reduce along last logical axis",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/reduce/test_reduction.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/reduce/test_reduction.py",
+          "sha256": "d803bd7209307af58264b7df3b82f6101a791744ec33fa17793082ecf20abf02",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tests/ttnn/unit_tests/operations/reduce/test_reduction_mean.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/reduce/test_reduction_mean.py",
+          "sha256": "fae1a461f441ccd0895c4aaa975d661335d0bd63d0fe1130a589165a97ca7abe",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "32x32",
+        "32x1024",
+        "64x33",
+        "24x42"
+      ],
+      "dtype_and_edge_cases": "BF16, TILE; signed cancellation, all zeros, constant rows, padded width",
+      "correctness_policy_to_calibrate": "Quantized inputs and FP32 reference; output keepdim fixed; size-dependent absolute/relative bounds with zero-safe checks",
+      "baseline_to_validate": "ttnn.sum / ttnn.mean with explicit dim and keepdim",
+      "compatibility_caveat": "Unary contract and scalar config needed for clean interface. Explicitly ignore implicit padded elements.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C05",
+      "priority": "P1",
+      "title": "Numerically stable row softmax",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "exp(x-max(x))/sum(exp(x-max(x)))",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/fused/test_softmax.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/fused/test_softmax.py",
+          "sha256": "81ad9f71f34ad173564682e08566ffe1295ee8e07dde24a655dcf10598c195ea",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1x1x32x64",
+        "1x1x32x1024",
+        "1x1x24x42"
+      ],
+      "dtype_and_edge_cases": "BF16, TILE; repeated maxima, positive/negative logits, range +/-100, padding poison",
+      "correctness_policy_to_calibrate": "FP32 stable reference on quantized logits; per-element bounds plus row-sum/nonnegative checks; PCC only supplementary, not sole acceptance",
+      "baseline_to_validate": "ttnn.softmax(dim=-1,numeric_stable=True)",
+      "compatibility_caveat": "Pinned tests exercise 24x42 padding and extreme values; attention optimized path requires 4D input. Calibrate stricter task-specific bounds rather than reusing every upstream tolerance.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C06",
+      "priority": "P1",
+      "title": "RMSNorm with scale / residual",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "(x+r)/sqrt(mean((x+r)^2)+eps)*gamma",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/fused/test_rms_norm.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/fused/test_rms_norm.py",
+          "sha256": "b4ec9fc2df25a005f5e55c76d75bdccc32a8360e1f418a79cdfd6c3dba389dc0",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tests/ttnn/unit_tests/operations/fused/test_rms_norm_sharded.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/fused/test_rms_norm_sharded.py",
+          "sha256": "7d06148f70ac89da0bcd45d513d5f00f82e4a0f7637457568fa5aaf0e560ab38",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1x32x64",
+        "1x32x1024",
+        "1x24x42"
+      ],
+      "dtype_and_edge_cases": "BF16; gamma BF16; epsilon explicit; TILE input, ROW_MAJOR/TILE scale as separate cases",
+      "correctness_policy_to_calibrate": "FP32 reference with frozen epsilon; zero/near-zero rows; all-element error and normalized error; dtype/path-specific bounds",
+      "baseline_to_validate": "ttnn.rms_norm with explicit weight, epsilon and optional residual",
+      "compatibility_caveat": "Plain two-input x,gamma TILE version may fit solve(a,b), but residual adds third input and ROW_MAJOR scale needs generalized manifest. Do not claim sharded support for this host until tested.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C07",
+      "priority": "P1",
+      "title": "LayerNorm with affine parameters",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "(x-mean(x))/sqrt(var(x)+eps)*gamma+beta",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/fused/test_layer_norm.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/fused/test_layer_norm.py",
+          "sha256": "c1f36bec8e7a93fbc13bcaeb00ff339d0672a54382ef12d5d61674f51f59859c",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tests/ttnn/unit_tests/operations/fused/test_layer_norm_sharded.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/fused/test_layer_norm_sharded.py",
+          "sha256": "181776e7f8feb2778dabd9e259712706053c82be175cc67be0c7a643f9d305b4",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "32x64",
+        "32x1024",
+        "42x24"
+      ],
+      "dtype_and_edge_cases": "BF16; explicit epsilon; biased variance; constant and low-variance rows",
+      "correctness_policy_to_calibrate": "FP32 reference on quantized x/gamma/beta; allclose and normalized error; record numerical path/fidelity",
+      "baseline_to_validate": "ttnn.layer_norm; pin Welford versus legacy path as separate baselines",
+      "compatibility_caveat": "At least x,gamma,beta; add optional residual only later. Source contains path-specific accuracy checks; global OJ atol=0.015625 is not an adequate policy for every norm case.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C08",
+      "priority": "P2",
+      "title": "Scaled dot-product attention prefill",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "softmax(Q*K^T/sqrt(d)+mask)*V",
+      "sources": [
+        {
+          "path": "tests/ttnn/unit_tests/operations/sdpa/test_sdpa_prefill.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/sdpa/test_sdpa_prefill.py",
+          "sha256": "ee87a52a9a6ac49ea6d515943c0191e94b9856746647b01a7c48225c23ed24ec",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tests/ttnn/unit_tests/operations/sdpa/sdpa_test_utils.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tests/ttnn/unit_tests/operations/sdpa/sdpa_test_utils.py",
+          "sha256": "3775653f6ebb3711879577df4cbc5dbe6b82837be58cfa0327f6338f8ade39df",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "B,H,S,D=1,4,128,64",
+        "1,4,512,64"
+      ],
+      "dtype_and_edge_cases": "BF16 initially; causal and noncausal separate tasks; no dropout; finite Q/K/V",
+      "correctness_policy_to_calibrate": "FP32 PyTorch SDPA reference with frozen mask/scale; per-element and normalized error; adversarial outliers; no PCC-only judge",
+      "baseline_to_validate": "ttnn.transformer.scaled_dot_product_attention at pinned signature",
+      "compatibility_caveat": "Needs >=3 input tensors, scalar configuration and larger-data transport. Pinned test helper hardcodes WormholeComputeKernelConfig in several paths; adapt using arch() and verify Blackhole, do not copy blindly.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C09",
+      "priority": "P2",
+      "title": "SwiGLU / gated MLP model fragment",
+      "interface": "ttnn",
+      "runner_requirement": "generalized_tensor_contract",
+      "semantics": "(silu(x*Wgate)*(x*Wup))*Wdown",
+      "sources": [
+        {
+          "path": "models/tt_transformers/tt/mlp.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/models/tt_transformers/tt/mlp.py",
+          "sha256": "edbd19fe99f70d998babcb690fb54fd80c22a5ae59ca546af425c9d1e9a745ca",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "models/tt_transformers/tt/model_config.py",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/models/tt_transformers/tt/model_config.py",
+          "sha256": "761b749aa60ce2d4091384f370cfac47df233782bd2d6425f8f9d6f8ca0ca91a",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "tokens,hidden,intermediate=32,256,512",
+        "128,512,1024"
+      ],
+      "dtype_and_edge_cases": "Synthetic BF16 inputs/weights; one device; no external checkpoint dependency",
+      "correctness_policy_to_calibrate": "FP32 fragment reference using BF16-quantized inputs; explicitly define intermediate/output quantization; bounds calibrated for accumulated layers",
+      "baseline_to_validate": "Simple TTNN matmul+silu+multiply+matmul sequence; optimized fragment baseline after extraction",
+      "compatibility_caveat": "Needs 4 tensors, owned buffers and general manifest. Existing model contains Blackhole-related shape branches, but full model runtime/config and multi-chip assumptions must be removed for this isolated task.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C10",
+      "priority": "P1",
+      "title": "DRAM -> L1 -> DRAM copy",
+      "interface": "metalium",
+      "runner_requirement": "new_trusted_host_template",
+      "semantics": "copy N tile pages",
+      "sources": [
+        {
+          "path": "tt_metal/programming_examples/loopback/loopback.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/loopback/loopback.cpp",
+          "sha256": "b5a5a965a8af3fe0639637e7713f39ecd4e5a4fe3534d9683bcd88f148bfca8d",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/loopback/kernels/loopback_dram_copy.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/loopback/kernels/loopback_dram_copy.cpp",
+          "sha256": "bbad5d01739b9d69d003e272e688139b357be0e1371b33ab05ea2e67f494af95",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1 tile",
+        "50 tiles",
+        "1024 tiles"
+      ],
+      "dtype_and_edge_cases": "Raw BF16 payload / arbitrary bit patterns; one core then multicore separate task",
+      "correctness_policy_to_calibrate": "Byte-for-byte output buffer equality, no numeric tolerance",
+      "baseline_to_validate": "Official loopback one-page-at-a-time barrier implementation",
+      "compatibility_caveat": "Current RISC-V task host only moves two uint32 values. Needs trusted host buffers, runtime args and page-count template; use TensorAccessor, no hardcoded Wormhole bank count.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C11",
+      "priority": "P1",
+      "title": "Multitile / multicore vector add",
+      "interface": "metalium",
+      "runner_requirement": "new_trusted_host_template",
+      "semantics": "out[i]=a[i]+b[i]",
+      "sources": [
+        {
+          "path": "tt_metal/programming_examples/vecadd_multi_core/vecadd_multi_core.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/vecadd_multi_core/vecadd_multi_core.cpp",
+          "sha256": "bbe2f3f7ab352dcdd7accfe7d2d9d9d2979661c7defe2b79b16ea3e10f041c04",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/vecadd_multi_core/kernels/add_multi_core.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/vecadd_multi_core/kernels/add_multi_core.cpp",
+          "sha256": "202c7f8b92ae2c08aace922bc61b4615b7a873ceb632da36d8ad9ed3a78e84e9",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1 tile",
+        "50 tiles",
+        "1024 tiles"
+      ],
+      "dtype_and_edge_cases": "BF16 TILE; nonconstant full tile data; uneven tile work partition",
+      "correctness_policy_to_calibrate": "FP32 reference on BF16 inputs with declared BF16 output rounding; all elements and boundaries checked",
+      "baseline_to_validate": "Single-core then official multicore vector-add baseline",
+      "compatibility_caveat": "Existing TT2002 host only supplies uniform one-tile inputs. Needs tensor input and trusted reader/writer/work partition; cannot create by changing metadata alone.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C12",
+      "priority": "P1",
+      "title": "SFPU exponential",
+      "interface": "metalium",
+      "runner_requirement": "new_trusted_host_template",
+      "semantics": "exp(x)",
+      "sources": [
+        {
+          "path": "tt_metal/programming_examples/eltwise_sfpu/eltwise_sfpu.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/eltwise_sfpu/eltwise_sfpu.cpp",
+          "sha256": "1f513d51d79260b49e7a738308ef987847a3916cc74719cf2cea744a0f42ee3e",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/eltwise_sfpu/kernels/compute/eltwise_sfpu.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/eltwise_sfpu/kernels/compute/eltwise_sfpu.cpp",
+          "sha256": "0b29276488aede3d2ac822d91bc07915ee04e0cfb8d5cf0fbf57c01dd61db957",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1 tile",
+        "50 tiles",
+        "1024 tiles"
+      ],
+      "dtype_and_edge_cases": "BF16 inputs range [-5,5]; output BF16; finite limits separate cases",
+      "correctness_policy_to_calibrate": "FP32 exp reference on quantized inputs; relative plus absolute bounds, calibrated for documented math approximation mode",
+      "baseline_to_validate": "Official exp_tile SFPU pipeline",
+      "compatibility_caveat": "Unary reader/writer and n_tiles args required; existing two-input single-tile compute host cannot be reused unchanged.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C13",
+      "priority": "P1",
+      "title": "Custom SFPI smoothstep",
+      "interface": "metalium",
+      "runner_requirement": "new_trusted_host_template",
+      "semantics": "t=clamp((x-edge0)/(edge1-edge0),0,1); t*t*(3-2*t)",
+      "sources": [
+        {
+          "path": "tt_metal/programming_examples/custom_sfpi_smoothstep/custom_sfpi_smoothstep.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/custom_sfpi_smoothstep/custom_sfpi_smoothstep.cpp",
+          "sha256": "a03a11e330acab8f8ddcae743df473102fc86e524c924f0560e8ac0c3d578fa3",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/custom_sfpi_smoothstep/kernels/compute/tiles_smoothstep.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/custom_sfpi_smoothstep/kernels/compute/tiles_smoothstep.cpp",
+          "sha256": "27cbfdafdf342b4e0ed263a22634f4ff9073a9f63335e08a685e8b51b450ccd2",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1 tile",
+        "50 tiles"
+      ],
+      "dtype_and_edge_cases": "BF16 initially; explicit edge0<edge1, endpoints and values outside interval",
+      "correctness_policy_to_calibrate": "FP32 reference on quantized inputs; range [0,1], endpoint checks and calibrated allclose",
+      "baseline_to_validate": "Official SFPI smoothstep implementation",
+      "compatibility_caveat": "Fixed SFPI 7.78.0 in runtime; add trusted unary host template and scalar args. Custom SFPI source-level compatibility is verified, no device execution in this research pass.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C14",
+      "priority": "P2",
+      "title": "Metalium GEMM from single core to reuse/multicast",
+      "interface": "metalium",
+      "runner_requirement": "multi_file_project_or_template_slots",
+      "semantics": "A*B",
+      "sources": [
+        {
+          "path": "tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/matmul/matmul_single_core/matmul_single_core.cpp",
+          "sha256": "2e5c22d7b469f78df9707c784db1bd4ace5fb58620d6a590cc06e6bed87b45ea",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/matmul/matmul_multi_core/matmul_multi_core.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/matmul/matmul_multi_core/matmul_multi_core.cpp",
+          "sha256": "da3e909e219fcd0aa6e6b30392e650d401aeba9e5b1f42fe0bc84d8cbf944566",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/matmul/matmul_multicore_reuse/matmul_multicore_reuse.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/matmul/matmul_multicore_reuse/matmul_multicore_reuse.cpp",
+          "sha256": "41036453c9f2547303292a3f8cf75cc0d50c7ea2284144f9b64926be7fef088b",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt_metal/programming_examples/matmul/matmul_multicore_reuse_mcast/matmul_multicore_reuse_mcast.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt_metal/programming_examples/matmul/matmul_multicore_reuse_mcast/matmul_multicore_reuse_mcast.cpp",
+          "sha256": "16fe2e59a0dbec2f3893a4b010c9fc801c6c3dee5a72578946b08fc224e2d049",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "M,K,N=32,32,32",
+        "128,128,128",
+        "256,256,256"
+      ],
+      "dtype_and_edge_cases": "BF16 TILE, exact prescribed fidelity initially; rectangular/multicore tracks later",
+      "correctness_policy_to_calibrate": "FP32 matrix reference on quantized inputs; K/fidelity-specific error; verify every output tile",
+      "baseline_to_validate": "Single-core, basic multicore, reuse, multicast variants under identical problem semantics",
+      "compatibility_caveat": "Needs host construction plus custom reader/compute/writer or trusted template slots; current single kernel submission cannot express all design choices. Query actual grid and L1 from device API.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    },
+    {
+      "candidate_id": "C15",
+      "priority": "P2",
+      "title": "Softmax backward / training operator",
+      "interface": "ttnn-or-tt-train",
+      "runner_requirement": "generalized_tensor_contract_or_tt_train_image",
+      "semantics": "dx=y*(grad-sum(y*grad,axis))",
+      "sources": [
+        {
+          "path": "tt-train/tests/ops/softmax_backward_op_test.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt-train/tests/ops/softmax_backward_op_test.cpp",
+          "sha256": "bf8e49ae9981d65a70210cc557a9184f1de219eded867b04ad472bd9fa938aef",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        },
+        {
+          "path": "tt-train/tests/ops/cross_entropy_fw_op_test.cpp",
+          "url": "https://github.com/tenstorrent/tt-metal/blob/de546d3b146758714d900f11b218c8f9c805f410/tt-train/tests/ops/cross_entropy_fw_op_test.cpp",
+          "sha256": "a793934866893a3ba891221a26fd7b46fc4f83c30f6d8b5c3fdf356fb8368e61",
+          "spdx_header": "SPDX-License-Identifier: Apache-2.0"
+        }
+      ],
+      "suggested_shapes": [
+        "1x1x32x32",
+        "1x1x32x1024"
+      ],
+      "dtype_and_edge_cases": "BF16 probabilities and gradients initially; FP32 later; known forward output",
+      "correctness_policy_to_calibrate": "Independent FP32 analytic reference plus selected finite-difference checks outside timed path; bounds per dtype/width",
+      "baseline_to_validate": "TTNN composition first; native tt-train fused implementation after separately building runtime",
+      "compatibility_caveat": "Two-input composition could fit existing solve(a,b), but native C++ tt-train cannot run in current kernel-only host, and current image does not establish tt-train availability. Pinned tests contain a P150-specific skip.",
+      "status": "source_verified_not_device_validated",
+      "published_problem_id": null
+    }
+  ]
+}

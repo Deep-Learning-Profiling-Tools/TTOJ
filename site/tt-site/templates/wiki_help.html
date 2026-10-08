@@ -1,0 +1,11 @@
+{% set page_name = "wiki_help" %}
+{% extends "layout/basic.html" %}
+{% block content %}<div class="row"><div class="columns"><section class="section">
+  <div class="section__header"><h1 class="section__title">{{ _('Getting started') }}</h1></div>
+  <div class="section__body typo">
+    <ol><li>{{ _('Choose a TTNN Python task or a Metalium C++ kernel task.') }}</li><li>{{ _('Read the function or kernel interface, then submit text code with the matching language.') }}</li><li>{{ _('Open the submission record to inspect correctness, compiler errors, runtime logs, and profiling.') }}</li></ol>
+    <p>{{ _('TTNN tasks provide device tensors and call solve(a, b). Metalium tasks provide the host, reader, and writer as needed; submit the device kernel only.') }}</p>
+    <p>{{ _('The local experimental judge runs hardware jobs serially and expects trusted submissions.') }}</p>
+    <p><a href="https://docs.tenstorrent.com/tt-metal/latest/ttnn/">TTNN documentation</a> · <a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/">Metalium documentation</a> · <a href="/profiling">{{ _('Understand profiling') }}</a></p>
+  </div>
+</section></div></div>{% endblock %}

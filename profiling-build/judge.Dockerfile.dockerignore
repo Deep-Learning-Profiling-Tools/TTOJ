@@ -1,0 +1,7 @@
+*
+!judge.Dockerfile
+!judge-src/
+!judge-src/**
+!judge-kernels/
+!judge-kernels/**
+!judge-entrypoint.sh

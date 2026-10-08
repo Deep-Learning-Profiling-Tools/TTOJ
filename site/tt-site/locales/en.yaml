@@ -1,0 +1,23 @@
+{
+  "__langname": "English",
+  "homepage": "Home",
+  "problem_main": "Accelerator problems",
+  "record_main": "Submissions",
+  "Submit to Judge": "Submit code",
+  "Total Time": "Total wall time",
+  "Peak Time": "Slowest testcase",
+  "Peak Memory": "Peak host memory",
+  "Time Cost": "Wall time",
+  "Memory Cost": "Host memory",
+  "requires_profiler_enabled_build": "The runtime image must enable the device profiler to produce a trace.",
+  "tt_profiling": "Profiling",
+  "problem_submit": "Submit code",
+  "record_detail": "Submission details",
+  "profiler_enabled_sdk_required": "The runtime image must enable the device profiler to produce a trace.",
+  "device_profiling_failed_or_no_csv": "The device profiler failed or did not produce a CSV trace.",
+  "no_profile_produced": "No profiling data was produced.",
+  "invalid_profile_json": "The profiling JSON is invalid.",
+  "profile_is_not_an_object": "The profiling data is not a valid object.",
+  "invalid_or_missing_samples": "Profiling samples are missing or invalid.",
+  "Device profiler is an instrumented diagnostic pass; do not mix its latency with the uninstrumented host pass.": "The device profiler runs as a separate diagnostic pass; keep its latency separate from the host pass, where device profiling is disabled."
+}

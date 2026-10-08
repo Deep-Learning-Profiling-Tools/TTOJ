@@ -1,0 +1,26 @@
+{% set page_name = "tt_profiling" %}
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row"><div class="columns"><section class="section">
+  <div class="section__header"><h1 class="section__title">{{ _('Understand profiling') }}</h1></div>
+  <div class="section__body typo">
+    <p>{{ _('Profiling explains where time is spent. A correctness score alone does not measure kernel speed.') }}</p>
+    <table><thead><tr><th>{{ _('Measurement') }}</th><th>{{ _('Scope') }}</th><th>{{ _('Use') }}</th></tr></thead><tbody>
+      <tr><td>{{ _('Container wall time') }}</td><td>{{ _('Initialization, JIT, data transfers, kernel execution, and teardown.') }}</td><td>{{ _('End-to-end judge cost and timeout enforcement.') }}</td></tr>
+      <tr><td>{{ _('Repeated host timing') }}</td><td>{{ _('Host submission through device completion, after warmup. It includes dispatch overhead and synchronization.') }}</td><td>{{ _('Compare median, p95, and jitter under the same recipe.') }}</td></tr>
+      <tr><td>{{ _('Device profiler') }}</td><td>{{ _('Device-side timestamp zones, reported per core and stage when the runtime enables profiling.') }}</td><td>{{ _('Inspect BRISC/NCRISC/Unpack/Math/Pack events and raw traces.') }}</td></tr>
+    </tbody></table>
+    <p>{{ _('Both passes use the same profiler-capable SDK. Host samples include its library and dispatch overhead with device profiling disabled.') }}</p>
+    <h2>{{ _('Read a profiling record') }}</h2>
+    <p>{{ _('Open a finished submission to see each testcase, warmup count, sample count, median, p95, MAD, and coefficient of variation. Download the JSON report and any available device CSV traces to reproduce the analysis.') }}</p>
+    <p>{{ _('Device cycles are converted to microseconds using the recorded device clock. Parallel stages overlap: adding their durations does not produce end-to-end kernel latency.') }}</p>
+    <p>{{ _('The CSV clock is a snapshot taken when the profiler initializes. Microsecond conversions assume it stays constant; frequency changes are not tracked for each event.') }}</p>
+    <p>{{ _('RISC counters are synchronized within a core. Different cores may have clock skew, and clocks are not synchronized across devices.') }}</p>
+    <p>{{ _('A missing device trace is shown as unavailable, never replaced by host timing. Record wall time remains separate from the warmed measurements.') }}</p>
+    <h2>{{ _('Compare experiments fairly') }}</h2>
+    <p>{{ _('Use the same inputs, source, image, driver, firmware, device allocation, CPU affinity, warmup, and sample count. The report records these details. Serial scheduling prevents two OJ jobs from sharing the mesh, but does not establish that outside processes are idle.') }}</p>
+    <p>{{ _('Experimental profiles are not used for a performance leaderboard. Check the report quality notes before drawing conclusions.') }}</p>
+    <a class="primary rounded button" href="/record">{{ _('View submissions') }}</a>
+  </div>
+</section></div></div>
+{% endblock %}

@@ -1,0 +1,35 @@
+# Copy to tt-oj-web-tunnel.service and replace the user, paths and VPS hostname.
+# Configure the VPS SSH server to allow the chosen remote bind address.
+[Unit]
+Description=TTOJ reverse SSH web tunnel
+Wants=network-online.target
+After=network-online.target docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=YOUR_LOCAL_USER
+ExecStart=/usr/bin/ssh -NT \
+    -i /home/YOUR_LOCAL_USER/.ssh/YOUR_TUNNEL_KEY \
+    -o IdentitiesOnly=yes \
+    -o BatchMode=yes \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile=/home/YOUR_LOCAL_USER/.ssh/known_hosts \
+    -o ConnectTimeout=15 \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -R 0.0.0.0:28888:127.0.0.1:8888 \
+    ubuntu@YOUR_VPS_HOST
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

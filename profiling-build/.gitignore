@@ -1,0 +1,9 @@
+tt-metal/
+build/
+install/
+wheels/
+judge-src/
+judge-kernels/
+judge-entrypoint.sh
+results/
+*.log

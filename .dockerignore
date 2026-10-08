@@ -1,0 +1,11 @@
+.env
+data
+.git
+**/__pycache__
+**/*.log
+**/build
+**/mpi
+profiling-build
+diagnostics
+*validation*.json
+test-results*.json

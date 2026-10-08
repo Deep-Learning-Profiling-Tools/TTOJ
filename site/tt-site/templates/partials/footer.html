@@ -1,0 +1,14 @@
+<footer class="footer"><div class="row"><div class="columns">
+  <div class="footer__extra-link clearfix">
+    <div class="footer__extra-left"><ol class="clearfix">
+      <li class="footer__extra-link-item"><a href="/wiki/help">{{ _('Getting started') }}</a></li>
+      <li class="footer__extra-link-item"><a href="/profiling">{{ _('Profiling') }}</a></li>
+      <li class="footer__extra-link-item"><a href="/status">{{ _('Service Status') }}</a></li>
+      <li class="footer__extra-link-item"><a href="/wiki/about">{{ _('About') }}</a></li>
+      <li class="footer__extra-link-item"><a href="{{ ttSourceUrl }}">{{ _('Source code') }}</a></li>
+    </ol></div>
+    <div class="footer__extra-right"><ol class="clearfix">
+      <li class="footer__extra-link-item">Powered by <a href="https://hydro.js.org">Hydro v{{ global.Hydro.version.hydrooj }}</a> {{ "Professional" if model.system.get('server.pro') else "Community" }} · Modified by TTOJ</li>
+    </ol></div>
+  </div>
+</div></div></footer>

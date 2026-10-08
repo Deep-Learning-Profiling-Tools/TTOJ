@@ -1,0 +1,9 @@
+*
+!runtime.Dockerfile
+!install/
+!install/opt/
+!install/opt/tt-profiler/
+!install/opt/tt-profiler/**
+!wheels/
+!wheels/*.whl
+!provenance.json

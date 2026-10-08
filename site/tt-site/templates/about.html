@@ -1,0 +1,12 @@
+{% set page_name = "wiki_about" %}
+{% extends "layout/basic.html" %}
+{% block content %}<div class="row"><div class="columns"><section class="section">
+  <div class="section__header"><h1 class="section__title">{{ _('About Tenstorrent OJ') }}</h1></div>
+  <div class="section__body typo">
+    <p>{{ _('This local site evaluates TTNN tensor programs and Metalium device kernels on Tenstorrent Blackhole hardware.') }}</p>
+    <p>{{ _('The web platform is Hydro. The local judge adapter, task recipes, and profiling reports extend its submission and record workflow.') }}</p>
+    <p>Hydro: <a href="https://github.com/hydro-dev/Hydro">hydro-dev/Hydro</a> · AGPL-3.0-or-later</p>
+    <p><a href="{{ ttSourceUrl }}">{{ _('Source code') }}</a> · TTOJ · AGPL-3.0-or-later</p>
+    <p>{{ _('Accounts and submissions stay in this installation. Only trusted experimental code should be submitted.') }}</p>
+  </div>
+</section></div></div>{% endblock %}

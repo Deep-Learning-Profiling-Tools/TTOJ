@@ -1,0 +1,36 @@
+{% set page_name = "homepage" %}
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row"><div class="columns">
+  <section class="section">
+    <div class="section__body typo" style="padding:28px">
+      <p style="letter-spacing:.08em;color:#67748a">BLACKHOLE · TTNN · METALIUM</p>
+      <h1 style="margin:8px 0 14px">{{ _('Run your code on Tenstorrent') }}</h1>
+      <p>{{ _('Submit tensor operations and device kernels to the local Blackhole accelerator. Inspect correctness, logs, and profiling in one place.') }}</p>
+      <a class="primary rounded button" href="/p">{{ _('Browse accelerator problems') }}</a>
+      <a class="rounded button" href="/record">{{ _('View submissions') }}</a>
+      <a class="rounded button" href="/profiling">{{ _('Understand profiling') }}</a>
+    </div>
+  </section>
+</div></div>
+<div class="row">
+  {% for task in [
+    ['TT1001', 'TTNN · Elementwise addition', 'Write solve(a, b) in Python and return a TTNN device tensor.'],
+    ['TT1002', 'TTNN · Matrix multiplication', 'Explore matrix multiplication with tiled BF16 tensors.'],
+    ['TT2001', 'Metalium · RISC-V integer addition', 'Move data through NoC and add uint32 values in a device kernel.'],
+    ['TT2002', 'Metalium · BF16 tile addition', 'Use circular buffers and the Tensix compute pipeline.']
+  ] %}
+  <div class="medium-6 columns"><section class="section">
+    <div class="section__header"><h2 class="section__title"><a href="/p/{{ task[0] }}">{{ task[0] }} · {{ _(task[1]) }}</a></h2></div>
+    <div class="section__body typo"><p>{{ _(task[2]) }}</p><a href="/p/{{ task[0] }}">{{ _('Open problem') }} →</a></div>
+  </section></div>
+  {% endfor %}
+</div>
+<div class="row"><div class="columns"><section class="section">
+  <div class="section__header"><h2 class="section__title">{{ _('What the measurements mean') }}</h2></div>
+  <div class="section__body typo">
+    <p>{{ _('Correctness scores and performance measurements are reported separately. Container wall time includes initialization, JIT, transfers, and execution. Repeated host timings and device profiler events have their own scopes.') }}</p>
+    <p>{{ _('Hardware jobs run serially. This private experimental judge expects trusted submissions; TTNN Python results are not proof of hardware execution.') }}</p>
+  </div>
+</section></div></div>
+{% endblock %}

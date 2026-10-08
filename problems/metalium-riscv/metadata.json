@@ -1,0 +1,36 @@
+{
+  "id": "TT2001",
+  "title": "Metalium：RISC-V 核上的无符号整数加法",
+  "language": "metalium-riscv",
+  "mode": "metalium-riscv",
+  "time_ms": 120000,
+  "content": "{\"zh\": \"# 任务\\n\\n提交一个 Metalium 数据搬运 kernel（C++），在 Blackhole 的 Device 0、Tensix 核 `(0, 0)` 上完成两个 `uint32_t` 整数的加法。超出范围时按模 `2^32` 回绕。\\n\\n你只需提交设备 kernel，不要提交主机 `main()`。系统已经提供可信主机程序：读取输入、分配 DRAM 和 L1、装载你的 kernel，最后把设备结果读回主机。\\n\\n# 输入与输出\\n\\n输入是一行 `a b`，范围为 `0 <= a,b <= 4294967295`。评测器检查设备 DRAM 中的实际输出，期望值为 `(a + b) mod 2^32`。\\n\\n# Kernel 接口\\n\\n入口是 `void kernel_main()`。六个 runtime arguments 的顺序如下：\\n\\n| 下标 | 含义 |\\n| --- | --- |\\n| 0 | 输入 a 的 DRAM 地址 |\\n| 1 | 输入 b 的 DRAM 地址 |\\n| 2 | 输出的 DRAM 地址 |\\n| 3 | 输入 a 的 L1 scratch 地址 |\\n| 4 | 输入 b 的 L1 scratch 地址 |\\n| 5 | 输出的 L1 scratch 地址 |\\n\\nDRAM page size 是 `sizeof(uint32_t)`，buffer interleaved。用 `InterleavedAddrGen<true>` 构造 NoC 地址，用 `noc_async_read` / `noc_async_read_barrier` 读取到 L1，完成计算，然后用 `noc_async_write` / `noc_async_write_barrier` 写回输出 DRAM。发起 NoC 写之前，使用 `ckernel::load_blocking` 确保 RISC-V 的 L1 写已经完成。\\n\\n评测器使用 `DataMovementProcessor::RISCV_0` 和默认 NoC；输入只能通过给定 DRAM buffer 读取。无需打印任何内容。SDK 是 TT-Metalium 0.79.0，SFPI 7.83.0。\\n\\n# 示例\\n\\n输入：\\n```text\\n14 7\\n```\\n设备输出：`21`。\\n\\n参考：[Tenstorrent 官方示例](https://github.com/tenstorrent/tt-metal/tree/main/tt_metal/programming_examples/add_2_integers_in_riscv)。\\n\\n## 性能剖析\\n\\n记录中的 Profiling 将热身后的重复主机测量与容器总墙钟时间分别显示。查看中位数、P95、样本数和抖动；若有设备 trace，可逐核心查看各 stage 的 cycles 和微秒。并行 stage 耗时不能直接相加。原始 JSON/CSV 可从记录下载。\\n\", \"en\": \"# Task\\n\\nSubmit a Metalium data movement kernel in C++ that adds two `uint32_t` values on Blackhole **device 0**, Tensix core `(0, 0)`. Overflow wraps modulo `2^32`.\\n\\nSubmit the device kernel only, without a host `main()`. The trusted host reads the input, allocates DRAM and L1 buffers, loads your kernel, and reads the actual output back from device DRAM.\\n\\n# Input and output\\n\\nInput is one line `a b`, with `0 <= a,b <= 4294967295`. The output must equal `(a + b) mod 2^32`. Integer results are compared exactly.\\n\\n# Kernel interface\\n\\nThe entry point is `void kernel_main()`. Its six runtime arguments are:\\n\\n| Index | Meaning |\\n| --- | --- |\\n| 0 | DRAM address of input a |\\n| 1 | DRAM address of input b |\\n| 2 | DRAM address of the output |\\n| 3 | L1 scratch address for input a |\\n| 4 | L1 scratch address for input b |\\n| 5 | L1 scratch address for the output |\\n\\nDRAM buffers are interleaved with a page size of `sizeof(uint32_t)`. Construct NoC addresses with `InterleavedAddrGen<true>`. Read into L1 using `noc_async_read` and `noc_async_read_barrier`, add the values, then write the result with `noc_async_write` and `noc_async_write_barrier`. Before starting the NoC write, use `ckernel::load_blocking` to ensure the RISC-V write to L1 has completed.\\n\\nThe host uses `DataMovementProcessor::RISCV_0` and its default NoC. Read inputs from the supplied DRAM buffers. Do not print an answer. The SDK is TT-Metalium 0.79.0 with SFPI 7.83.0.\\n\\n# Example\\n\\n```text\\n14 7\\n```\\n\\nThe value read from output DRAM must be `21`.\\n\\nReference: [Tenstorrent's official example](https://github.com/tenstorrent/tt-metal/tree/main/tt_metal/programming_examples/add_2_integers_in_riscv).\\n\\n\\n## Profiling\\n\\nThe Profiling panel separates repeated host measurements after warmup from total container wall time. Inspect median, P95, sample count, and jitter. When a device trace is available, inspect cycles and microseconds per core and stage; parallel stage durations must not be summed. Download raw JSON/CSV from the record.\\n\"}",
+  "tests": [
+    {
+      "input": "14 7\n",
+      "output": "21\n"
+    },
+    {
+      "input": "0 0\n",
+      "output": "0\n"
+    },
+    {
+      "input": "123 456\n",
+      "output": "579\n"
+    },
+    {
+      "input": "4294967295 1\n",
+      "output": "0\n"
+    },
+    {
+      "input": "2147483648 2147483648\n",
+      "output": "0\n"
+    }
+  ],
+  "atol": 0,
+  "rtol": 0,
+  "titles": {
+    "zh": "Metalium：RISC-V 核上的无符号整数加法",
+    "en": "Metalium · RISC-V integer addition"
+  }
+}
