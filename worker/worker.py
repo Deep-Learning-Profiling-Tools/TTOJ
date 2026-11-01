@@ -29,15 +29,23 @@ from device_profile import parse_device_profile
 from protocol import Attempt, load_policy, recover_interrupted
 
 AC, WA, TLE, MLE, OLE, RE, CE, SE = range(1, 9)
-LANGS = ("ttnn", "metalium-riscv", "metalium-compute")
+LANGS = ("ttnn", "ttlang", "metalium-riscv", "metalium-compute")
+PYTHON_MODES = ("ttnn", "ttlang")
 MARKER = "TT_OJ_RESULT:"
 PROFILE_MARKER = "TT_OJ_PROFILE:"
+DETAIL_MARKER = "TT_OJ_DETAIL:"
 OUTPUT_LIMIT = 256 * 1024
 BASE_URL = os.environ.get("HYDRO_URL", "http://site:8888/").rstrip("/") + "/"
 JOBS = Path(os.environ.get("JOBS_DIR", "/jobs"))
 HOST_JOBS = Path(os.environ["JOBS_HOST_DIR"])
 TTNN_IMAGE = os.environ["TTNN_IMAGE"]
 METALIUM_IMAGE = os.environ.get("METALIUM_IMAGE", "tt-oj-metalium:0.1")
+TTLANG_IMAGE = os.environ.get("TTLANG_IMAGE", "tt-oj-ttlang-runtime:1.1.10")
+RUNTIME_IMAGES = {"ttnn": TTNN_IMAGE, "ttlang": TTLANG_IMAGE, "metalium": METALIUM_IMAGE}
+
+
+def image_family(mode):
+    return mode if mode in PYTHON_MODES else "metalium"
 log = logging.getLogger("tt-judge")
 PROFILES = Path(os.environ.get("PROFILES_DIR", "/profiles"))
 BENCHMARK_CPUSET = os.environ.get("BENCHMARK_CPUSET", "4-7,12-15")
@@ -266,20 +274,20 @@ class Judge:
     def prepare(self, folder, task, manifest, case, profiling=False):
         folder.mkdir(parents=True, exist_ok=True)
         mode = manifest["mode"]
-        source_name = "submission.py" if mode == "ttnn" else "solution.cpp"
+        source_name = "submission.py" if mode in PYTHON_MODES else "solution.cpp"
         (folder / source_name).write_text(task["code"], encoding="utf-8")
         (folder / "input.txt").write_text(case["input"], encoding="utf-8")
-        if mode == "ttnn":
-            (folder / "runner.py").write_bytes(Path("/app/ttnn_runner.py").read_bytes())
+        if mode in PYTHON_MODES:
+            (folder / "runner.py").write_bytes(Path(f"/app/{mode}_runner.py").read_bytes())
         host_folder = HOST_JOBS / folder.relative_to(JOBS)
         # Pass all mesh device nodes required by topology discovery. Serial lock
         # protects the complete mesh; programs use device 0 in the initial tasks.
         devices = [f"/dev/tenstorrent/{i}:/dev/tenstorrent/{i}:rwm" for i in range(4)]
-        executable = "/opt/venv/bin/python3 /workspace/runner.py" if mode == "ttnn" else (
+        executable = "/opt/venv/bin/python3 /workspace/runner.py" if mode in PYTHON_MODES else (
             "/opt/tt-oj/bin/judge-riscv" if mode == "metalium-riscv" else "/opt/tt-oj/bin/judge-compute"
         )
         # Resolve a mutable tag once per attempt; every pass executes that ID.
-        image = task.get("_runtime_image_id") or (TTNN_IMAGE if mode == "ttnn" else METALIUM_IMAGE)
+        image = task.get("_runtime_image_id") or RUNTIME_IMAGES[image_family(mode)]
         environment = {
             "HOME": "/tmp", "PYTHONUNBUFFERED": "1", "TT_METAL_LOGGER_LEVEL": "warning",
             "TT_OJ_BENCHMARK": "0" if profiling else "1",
@@ -288,10 +296,17 @@ class Judge:
             "TT_OJ_PROFILE_ONLY": "1" if profiling else "0",
             "TT_OJ_DEVICE_PROFILER_SUPPORTED": "1" if DEVICE_PROFILER_SUPPORTED else "0",
             "TT_METAL_PROFILER_DIR": "/tmp/generated/profiler",
-            "TT_METAL_RUNTIME_ROOT": "/opt/tt-profiler/libexec/tt-metalium",
         }
+        if mode == "ttlang":
+            # The TT-Lang wheel bundles its own runtime; its perf tools look under $TT_METAL_HOME/generated/profiler.
+            environment["TT_METAL_HOME"] = "/tmp"
+        else:
+            environment["TT_METAL_RUNTIME_ROOT"] = "/opt/tt-profiler/libexec/tt-metalium"
         if profiling:
             environment["TT_METAL_DEVICE_PROFILER"] = "1"
+            if mode == "ttlang":
+                # NoC event tracing feeds the TT-Lang perf summary (DRAM bytes, transfer sizes, effective bandwidth).
+                environment["TT_METAL_DEVICE_PROFILER_NOC_EVENTS"] = "1"
             environment["TT_METAL_PROFILER_DISABLE_PUSH_TO_TRACY"] = "1"
             environment["TT_METAL_PROFILER_CPP_POST_PROCESS"] = "0"
             environment["TT_METAL_PROFILER_MID_RUN_DUMP"] = "1"
@@ -422,14 +437,15 @@ class Judge:
                 "cpu_quota": None, "queue_priority": task.get("priority"),
                 "queue_policy": "Hydro priority queue", "external_contention_verified": False}
             code_paths = [Path(__file__), Path(__file__).with_name("metrics.py"), Path(__file__).with_name("device_profile.py"),
-                          Path(__file__).with_name("protocol.py"), Path('/app/ttnn_runner.py')]
+                          Path(__file__).with_name("protocol.py"), Path('/app/ttnn_runner.py'), Path('/app/ttlang_runner.py')]
             code_paths.extend(sorted(Path('/app/reference').glob('*')))
             report["environment"].update({
                 "ttnn_wrapper_sha256": sha256(Path('/app/ttnn_runner.py').read_bytes()),
+                "ttlang_wrapper_sha256": sha256(Path('/app/ttlang_runner.py').read_bytes()),
                 "worker_code_sha256": {path.name: sha256(path.read_bytes()) for path in code_paths if path.is_file()},
                 "sdk_commit": "de546d3b146758714d900f11b218c8f9c805f410",
                 "sdk_build": "v0.79.0 ReleaseTracy; profiler enabled only in separate diagnostic pass",
-                "runtime_images": {"ttnn": TTNN_IMAGE, "metalium": METALIUM_IMAGE},
+                "runtime_images": dict(RUNTIME_IMAGES),
                 "before": telemetry_snapshot(), "host_kernel": os.uname().release,
                 "worker_hostname": socket.gethostname(), "image_ids": {},
             })
@@ -453,7 +469,7 @@ class Judge:
             if len(task["code"].encode()) > 256 * 1024:
                 await end(CE, "source_exceeds_256_kib", compilerText="Source exceeds 256 KiB.")
                 return
-            if mode == "ttnn":
+            if mode in PYTHON_MODES:
                 attempt.event("syntax_check_started")
                 try:
                     compile(task["code"], "submission.py", "exec")
@@ -461,10 +477,10 @@ class Judge:
                     await end(CE, "python_syntax_error", compilerText=str(error))
                     return
                 attempt.event("syntax_check_passed")
-            images = {name: self.docker.images.get(image) for name, image in (("ttnn", TTNN_IMAGE), ("metalium", METALIUM_IMAGE))}
+            images = {name: self.docker.images.get(image) for name, image in RUNTIME_IMAGES.items()}
             report["environment"]["image_ids"] = {name: image.id for name, image in images.items()}
             report["environment"]["image_repo_digests"] = {name: image.attrs.get("RepoDigests", []) for name, image in images.items()}
-            task["_runtime_image_id"] = images["ttnn" if mode == "ttnn" else "metalium"].id
+            task["_runtime_image_id"] = images[image_family(mode)].id
             report["environment"]["executed_runtime_image_id"] = task["_runtime_image_id"]
             try:
                 report["environment"]["worker_image_id"] = self.docker.containers.get(socket.gethostname()).image.id
@@ -538,6 +554,11 @@ class Judge:
                         except (ValueError, TypeError) as error:
                             status, message = RE, f"Invalid result format: {error}"
                             profile_case["correctness"]["host_comparison"] = "invalid_result_format"
+                if mode == "ttlang" and status in (AC, WA):
+                    # The TT-Lang wrapper compares against the reference itself; surface its one-line summary.
+                    details = [line[len(DETAIL_MARKER):] for line in outcome["stdout"].splitlines() if line.startswith(DETAIL_MARKER)]
+                    if len(details) == 1:
+                        message += " " + details[0][:1000]
                 if status in (RE, CE) and not message:
                     message = full_log[-4000:]
                 if status == TLE:

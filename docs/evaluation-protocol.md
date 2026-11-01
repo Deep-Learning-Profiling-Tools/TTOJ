@@ -27,6 +27,17 @@ or lifecycle events are not reconstructed retrospectively.
 | Host synchronized call | Fresh container per case; first correctness/JIT invocation, 5 warmups, 50 timed repeats; profiler disabled | TTNN `solve(a,b)` followed by device synchronization, including allocations inside `solve`; Metalium `EnqueueMeshWorkload` followed by `distributed::Finish` | Container startup, device initialization, first-call JIT, input upload and output download |
 | Device kernel cycles | Separate fresh container per accepted case; profiler enabled; first invocation, 5 warmups, 10 selected repeats | Official firmware kernel zones, grouped by device/core/RISC and ordered stage occurrence; same-core envelopes | Initial invocation and warmup events are excluded from selected statistics; profiler flush/export is outside kernel cycle intervals |
 
+For the CS540 TT-Lang problems (`ttlang` mode) both recipes apply unchanged to the
+submitted `@ttl.operation` call: the host pass times `operation(inputs..., out)` plus
+device synchronization on preallocated FP32 tile tensors (padding, upload and readback
+excluded), and the device pass additionally enables NoC event tracing so that tt-lang's
+perf summary (`ttl._src.perf_summary`) can report kernel duration, cores, DRAM bytes
+and effective bandwidth for the ten selected samples. Correctness is checked inside
+the wrapper against a PyTorch reference with the manifest's `tolerance`
+(`|got - want| <= atol + rtol * scale`); the broker only compares the verdict marker.
+The wrapper's one-line correctness detail (mismatch count, max error) is appended to
+the case message, and numeric correctness fields are copied into the public report.
+
 Both passes warm the program cache in their own process. There is **no explicit
 L1 or DRAM cache flush**. Separate passes can have different thermal, cache and
 scheduling conditions. Profiling changes the workload and inter-sample spacing;

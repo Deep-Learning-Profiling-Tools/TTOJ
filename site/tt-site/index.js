@@ -3,6 +3,35 @@ const path = require('node:path');
 const { Handler, NotFoundError, ForbiddenError, PRIV } = require('hydrooj');
 const { RecordDetailHandler } = require(path.join(path.dirname(require.resolve('hydrooj/package.json')), 'src/handler/record'));
 const PROFILE_ROOT = '/data/tt-profiles';
+// Per-problem total submission caps (all users, pretests included) from /problems/*/metadata.json.
+const SUBMISSION_LIMITS = new Map();
+
+class SubmissionLimitError extends ForbiddenError {
+  constructor(...args) {
+    super(...args);
+    this.name = 'SubmissionLimitError';
+    this.msg = () => 'This problem has reached its submission limit ({0} of {1} submissions used across all accounts). Ask the instructor to raise the limit.';
+  }
+}
+
+async function submissionsUsed(domainId, docId) {
+  // Every record on the problem consumes hardware time: normal submissions and pretests alike.
+  // Rejudging reuses the record, so it is not counted twice.
+  return global.Hydro.model.record.coll.countDocuments({ domainId, pid: docId });
+}
+
+function quotaBanner(content, used, limit) {
+  const en = `> **Submission quota:** ${used} / ${limit} used on this problem (all accounts, pretests included).\n\n`;
+  const zh = `> **提交配额：** 本题已使用 ${used} / ${limit} 次（所有账号、含 pretest）。\n\n`;
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const key of Object.keys(parsed)) parsed[key] = (String(key).startsWith('zh') ? zh : en) + parsed[key];
+      return JSON.stringify(parsed);
+    }
+  } catch { /* plain markdown statement */ }
+  return en + content;
+}
 const sourceRef = process.env.TTOJ_SOURCE_REF || 'main';
 const SOURCE_URL = `https://github.com/gujialiang123/TTOJ/tree/${encodeURIComponent(sourceRef)}`;
 
@@ -110,6 +139,7 @@ exports.apply = function apply(ctx) {
     try {
       const manifest = JSON.parse(fs.readFileSync(path.join('/problems', entry.name, 'metadata.json'), 'utf8'));
       if (manifest.titles) titleTranslations.set(manifest.id, { title: manifest.title, titles: manifest.titles });
+      if (Number.isInteger(manifest.submission_limit) && manifest.submission_limit > 0) SUBMISSION_LIMITS.set(manifest.id, manifest.submission_limit);
     } catch (error) { if (error.code !== 'ENOENT') console.warn(error.message); }
   }
   const englishFor = (handler) => {
@@ -131,6 +161,13 @@ exports.apply = function apply(ctx) {
     query.$nor ||= [];
     query.$nor.push({ pid: 'P1000', owner: 1, title: 'A+B Problem' });
   });
+  // Enforce the per-problem cap before Hydro creates the record (runs after prepare, so pdoc is loaded).
+  ctx.on('handler/before/ProblemSubmit#post', async (handler) => {
+    const limit = SUBMISSION_LIMITS.get(handler.pdoc?.pid);
+    if (!limit) return;
+    const used = await submissionsUsed(handler.args.domainId, handler.pdoc.docId);
+    if (used >= limit) throw new SubmissionLimitError(used, limit);
+  });
   ctx.Route('tt_profiling', '/profiling', TTProfilingHandler);
   ctx.Route('tt_profile_json', '/record/:rid/profile', TTProfileDownloadHandler);
   ctx.Route('tt_profile_artifact', '/record/:rid/profile/:artifact', TTProfileDownloadHandler);
@@ -148,6 +185,12 @@ exports.apply = function apply(ctx) {
       const oldTitle = body.pdoc.title;
       body.pdoc = localize(body.pdoc);
       if (handler.UiContext.extraTitleContent === oldTitle) handler.UiContext.extraTitleContent = body.pdoc.title;
+      const limit = SUBMISSION_LIMITS.get(body.pdoc.pid);
+      if (limit && handler.response.template === 'problem_detail.html' && typeof body.pdoc.content === 'string') {
+        const used = await submissionsUsed(handler.args.domainId, body.pdoc.docId);
+        body.pdoc = { ...body.pdoc, content: quotaBanner(body.pdoc.content, used, limit) };
+        body.ttSubmissionQuota = { used, limit, remaining: Math.max(0, limit - used) };
+      }
     }
     if (Array.isArray(body.pdocs)) body.pdocs = body.pdocs.map(localize);
     if (body.pdict) body.pdict = Object.fromEntries(Object.entries(body.pdict).map(([id, pdoc]) => [id, localize(pdoc)]));

@@ -98,6 +98,7 @@ module.exports = async function bootstrap({ reseedProblems = false } = {}) {
   await system.set('ui-default.about', '# about Tenstorrent OJ\n本地 Blackhole 代码评测与性能实验平台。\nLocal Blackhole code evaluation and profiling.\nPowered by Hydro; AGPL-3.0-or-later.\n');
   await system.set('hydrooj.langs', JSON.stringify({
     ttnn: { display: 'Tenstorrent TTNN (Python)', code_file: 'submission.py', execute: 'python3 submission.py', highlight: 'python', monaco: 'python', comment: '#', process_limit: 128 },
+    ttlang: { display: 'Tenstorrent TT-Lang (Python)', code_file: 'submission.py', execute: 'python3 submission.py', highlight: 'python', monaco: 'python', comment: '#', process_limit: 128 },
     'metalium-riscv': { display: 'Tenstorrent Metalium (RISC-V C++)', code_file: 'submission.cpp', execute: '/w/submission', highlight: 'cpp', monaco: 'cpp', comment: '//', process_limit: 128 },
     'metalium-compute': { display: 'Tenstorrent Metalium (Compute C++)', code_file: 'submission.cpp', execute: '/w/submission', highlight: 'cpp', monaco: 'cpp', comment: '//', process_limit: 128 },
   }, null, 2));
@@ -152,7 +153,7 @@ module.exports = async function bootstrap({ reseedProblems = false } = {}) {
       await problem.addTestdata('system', pid, 'manifest.json', Buffer.from(JSON.stringify(manifest)), 3);
       await problem.addTestdata('system', pid, 'config.yaml', Buffer.from(JSON.stringify(config)), 3);
       // Make starter code downloadable without displaying hidden test answers.
-      const starterName = manifest.language === 'ttnn' ? 'starter.py' : 'starter.cpp';
+      const starterName = ['ttnn', 'ttlang'].includes(manifest.language) ? 'starter.py' : 'starter.cpp';
       const starterPath = path.join(folder, starterName);
       const starter = manifest.starter || (fs.existsSync(starterPath) ? fs.readFileSync(starterPath) : null);
       if (starter) {

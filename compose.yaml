@@ -54,6 +54,7 @@ services:
       JOBS_HOST_DIR: "${JOBS_HOST_DIR:-${PWD}/data/jobs}"
       TTNN_IMAGE: "${TTNN_IMAGE:-tt-oj-profiler-runtime:0.79.0}"
       METALIUM_IMAGE: "${METALIUM_IMAGE:-tt-oj-metalium-profiler:0.79.0}"
+      TTLANG_IMAGE: "${TTLANG_IMAGE:-tt-oj-ttlang-runtime:1.1.10}"
     depends_on:
       site:
         condition: service_healthy

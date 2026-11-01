@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 import statistics
 import time
 
@@ -50,6 +51,14 @@ def summarize_profile(profile):
             metadata[name] = profile[name]
     scope = profile.get("timing_scope")
     metadata["timing_scope"] = scope if scope in ("host_submit_to_device_complete", "device_kernel_cycles") else "unknown_redacted"
+    # TT-Lang exercise wrappers add numeric-only correctness and perf-summary blocks; copy numbers, never free text.
+    for block in ("correctness", "ttlang_perf_summary"):
+        value = profile.get(block)
+        if isinstance(value, dict):
+            metadata[block] = {key: item for key, item in value.items()
+                               if re.fullmatch(r"[a-z0-9_]{1,64}", str(key)) and type(item) in (int, float, bool) and math.isfinite(item)}
+    if profile.get("exercise") in ("vector-add", "ragged-sum", "ragged-softmax"):
+        metadata["exercise"] = profile["exercise"]
     clock = profile.get("clock")
     if clock in ("perf_counter", "steady_clock"):
         metadata["clock"] = clock
