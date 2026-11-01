@@ -13,6 +13,14 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def numeric_block(value):
+    """Keep only finite numeric fields with simple keys from a wrapper-provided object."""
+    if not isinstance(value, dict):
+        return None
+    return {key: item for key, item in value.items()
+            if re.fullmatch(r"[a-z0-9_]{1,64}", str(key)) and type(item) in (int, float, bool) and math.isfinite(item)}
+
+
 def percentile(values, p):
     ordered = sorted(values)
     position = (len(ordered) - 1) * p
@@ -53,10 +61,8 @@ def summarize_profile(profile):
     metadata["timing_scope"] = scope if scope in ("host_submit_to_device_complete", "device_kernel_cycles") else "unknown_redacted"
     # TT-Lang exercise wrappers add numeric-only correctness and perf-summary blocks; copy numbers, never free text.
     for block in ("correctness", "ttlang_perf_summary"):
-        value = profile.get(block)
-        if isinstance(value, dict):
-            metadata[block] = {key: item for key, item in value.items()
-                               if re.fullmatch(r"[a-z0-9_]{1,64}", str(key)) and type(item) in (int, float, bool) and math.isfinite(item)}
+        if isinstance(profile.get(block), dict):
+            metadata[block] = numeric_block(profile[block])
     if profile.get("exercise") in ("vector-add", "ragged-sum", "ragged-softmax"):
         metadata["exercise"] = profile["exercise"]
     clock = profile.get("clock")

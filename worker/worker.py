@@ -24,7 +24,7 @@ import aiohttp
 import docker
 from docker.types import LogConfig, Ulimit
 from yarl import URL
-from metrics import quality_report, sha256, summarize_profile, telemetry_snapshot
+from metrics import numeric_block, quality_report, sha256, summarize_profile, telemetry_snapshot
 from device_profile import parse_device_profile
 from protocol import Attempt, load_policy, recover_interrupted
 
@@ -611,6 +611,9 @@ class Judge:
                             if not diagnostic_correct:
                                 raise ValueError("Device diagnostic result failed correctness validation")
                             device_profile = parse_device_profile(diagnostic["profiler_csv"], capture=capture)
+                            for block in ("ttlang_perf_summary", "correctness"):
+                                if isinstance(metadata.get(block), dict):
+                                    device_profile[block] = numeric_block(metadata[block])
                         except (ValueError, TypeError, KeyError) as error:
                             device_profile = {"available": False, "valid": False, "reason": str(error)}
                         device_profile["artifacts"] = [filename]

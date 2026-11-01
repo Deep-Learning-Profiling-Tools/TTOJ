@@ -5,6 +5,11 @@
       <p><a class="rounded button" href="{{ url('tt_profile_json', rid=rdoc._id) }}">{{ _('Download profiling JSON') }}</a> · <a href="/profiling">{{ _('Measurement guide') }}</a></p>
       {% for c in ttProfile.cases %}
         <h3>{{ _('Testcase') }} {{ c.id }}</h3>
+        {% if c.correctness %}<p>{{ _('Correctness') }}: {{ c.correctness.mismatch_count }} / {{ c.correctness.checked_count }} {{ _('values outside tolerance') }} · {{ _('max abs error') }} {{ c.correctness.max_abs_err }} · {{ _('worst error/bound') }} {{ c.correctness.max_err_to_bound_ratio }}</p>{% endif %}
+        {% if c.perf_summary %}
+          <p>{{ _('TT-Lang perf summary (device pass, median of {0} programs)').format(c.perf_summary.program_count) }}</p>
+          <table class="tt-perf-summary"><thead><tr><th>{{ _('Kernel duration') }}</th><th>{{ _('Cores') }}</th><th>{{ _('Grid') }}</th><th>{{ _('DRAM read + write') }}</th><th>{{ _('Effective bandwidth') }}</th><th>{{ _('DRAM transfers') }}</th><th>{{ _('Transfer size') }}</th></tr></thead><tbody><tr><td>{{ c.perf_summary.display_duration_us }} µs</td><td>{{ c.perf_summary.num_cores }}</td><td>{{ c.perf_summary.display_grid }}</td><td>{{ c.perf_summary.display_dram_mb }} MB</td><td>{{ c.perf_summary.display_bw }} GB/s</td><td>{{ c.perf_summary.dram_read_count }} / {{ c.perf_summary.dram_write_count }}</td><td>{{ c.perf_summary.transfer_size_min_bytes or '—' }}–{{ c.perf_summary.transfer_size_max_bytes or '—' }} B</td></tr></tbody></table>
+        {% endif %}
         {% if c.host.available %}
           <p>{{ _('Host submission to device completion') }} · {{ _('Warmup') }}: {{ c.host.warmup_count }} · {{ _('Samples') }}: {{ c.host.sample_count }}</p>
           <table><thead><tr><th>{{ _('Median') }}</th><th>P95</th><th>{{ _('Minimum') }}</th><th>{{ _('Maximum') }}</th><th>MAD</th><th>CV</th></tr></thead><tbody><tr><td>{{ c.host.display.median }} µs</td><td>{{ c.host.display.p95 }} µs</td><td>{{ c.host.display.min }} µs</td><td>{{ c.host.display.max }} µs</td><td>{{ c.host.display.mad }} µs</td><td>{{ c.host.display.cv }}%</td></tr></tbody></table>

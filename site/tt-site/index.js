@@ -64,6 +64,14 @@ function displayProfile(report) {
       ? completeCoreGroups.reduce((slowest, group) => group.median_ns > slowest.median_ns ? group : slowest) : null;
     return {
       id: item.id,
+      correctness: host.correctness || null,
+      perf_summary: device.ttlang_perf_summary ? {
+        ...device.ttlang_perf_summary,
+        display_duration_us: Number.isFinite(device.ttlang_perf_summary.duration_us_median) ? device.ttlang_perf_summary.duration_us_median.toFixed(2) : '—',
+        display_dram_mb: ((device.ttlang_perf_summary.dram_bytes_read + device.ttlang_perf_summary.dram_bytes_written) / 1e6).toFixed(2),
+        display_bw: Number.isFinite(device.ttlang_perf_summary.effective_gbps) ? device.ttlang_perf_summary.effective_gbps.toFixed(1) : '—',
+        display_grid: `${device.ttlang_perf_summary.grid_x}×${device.ttlang_perf_summary.grid_y}`,
+      } : null,
       host: {
         available: host.available, reason: host.reason,
         warmup_count: host.warmup_count, sample_count: host.sample_count,
