@@ -6,7 +6,8 @@ share the padded shape (R_pad, W_pad). This baseline is correct for every case; 
 Pass 1 finds the masked row maximum, pass 2 accumulates the denominator, pass 3 writes the
 normalized weights. Row statistics are kept in loop-carried (1, 1) blocks and handed to the
 broadcasts through scratch dataflow buffers. Masked entries are replaced by -300 so that
-exp(masked - max) underflows to zero; empty rows get a denominator of 1 and therefore zeros.
+exp(masked - max) underflows to zero; empty rows have a zero denominator, which is replaced by
+a small epsilon so that 0 * (1 / eps) stays 0.
 """
 import ttl
 import ttnn
@@ -31,6 +32,7 @@ def ragged_softmax(x, valid, out):
         for _ in range(row_groups):
             ones = ttl.block.fill(1.0, shape=(1, 1), dtype=ttnn.float32)
             sentinel = ttl.block.fill(-300.0, shape=(1, 1), dtype=ttnn.float32)
+            eps = ttl.block.fill(1e-6, shape=(1, 1), dtype=ttnn.float32)
             # Pass 1: running maximum of the masked logits, kept as max(m, r) = m + max(r - m, 0).
             row_max = ttl.block.fill(-300.0, shape=(1, 1), dtype=ttnn.float32)
             zero = ttl.block.fill(0.0, shape=(1, 1), dtype=ttnn.float32)
@@ -50,13 +52,10 @@ def ragged_softmax(x, valid, out):
                         w_blk.store(ttl.exp(x_blk * valid_blk + sentinel * (ones - valid_blk) - shift) * valid_blk)
                     with w_dfb.wait() as w_blk:
                         denominator += ttl.math.reduce_sum(w_blk, dims=[1], shape=(1, 1))
-                safe = denominator + (ones - ttl.min(denominator, ones))
-                # ttl.recip is a fast approximation (about 5% here); two Newton steps bring it to FPU precision.
-                inverse = ttl.recip(safe)
-                inverse = inverse * (ones + ones - safe * inverse)
-                inverse = inverse * (ones + ones - safe * inverse)
+                # Non-empty rows have denominator >= exp(-0.04) because the maximum entry contributes about 1;
+                # empty rows have exactly 0 and are normalized by eps instead (0 * 1/eps = 0).
                 with inv_dfb.reserve() as inv_blk:
-                    inv_blk.store(inverse)
+                    inv_blk.store(ttl.recip(ttl.max(denominator, eps)))
                 # Pass 3: normalized weights.
                 with inv_dfb.wait() as inv_blk:
                     scale = ttl.block.broadcast(inv_blk, dims=[1], shape=(1, 1))

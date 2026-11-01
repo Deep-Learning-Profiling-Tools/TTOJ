@@ -23,7 +23,7 @@ RAGGED_CASES = [(256, 65), (8192, 96), (1024, 542), (1024, 8192), (32, 16384), (
 TOLERANCES = {
     "vector-add": {"atol": 1e-6, "rtol": 2 ** -8, "scale": "|a| + |b| per element"},
     "ragged-sum": {"atol": 1e-6, "rtol": 2 ** -8, "scale": "sum of |x| over the valid prefix of the row"},
-    "ragged-softmax": {"atol": 1e-4, "rtol": 0.1, "scale": "|reference value| per element"},
+    "ragged-softmax": {"atol": 1e-4, "rtol": 2 ** -6, "scale": "|reference value| per element"},
 }
 
 COMMON_EN = """
@@ -139,11 +139,11 @@ PROBLEMS = {
         "harness_en": ("Padding: `x` and `valid` are padded exactly as in the ragged sum problem. `out` has the padded shape "
                        "`(R_pad, W_pad)`; the judge checks the top-left `R × L` block, so padded positions may hold any finite value. "
                        "Subtract the row maximum before exponentiating. Wide rows need more than one pass over the row. "
-                       "`ttl.recip` is a fast approximation (about 5% error on this hardware); refine it with a Newton step "
-                       "(`r = r * (2 - d * r)`) if you need the full tolerance margin."),
+                       "Guard the empty-row denominator with `ttl.max(denominator, eps)` rather than by comparing it with 1: "
+                       "the FPU rounds the row maximum, so a non-empty row's denominator can be slightly below 1."),
         "harness_zh": ("填充规则：`x` 和 `valid` 的填充方式与不等长行求和题相同。`out` 为填充后的形状 `(R_pad, W_pad)`，评测器只检查左上角 "
                        "`R × L` 区域，填充位置可以是任意有限值。指数运算前请先减去行最大值。宽行需要多趟遍历。"
-                       "`ttl.recip` 是快速近似（本硬件上约 5% 误差），需要更高精度时用牛顿迭代修正（`r = r * (2 - d * r)`）。"),
+                       "空行的分母请用 `ttl.max(denominator, eps)` 保护，不要和 1 比较：FPU 会舍入行最大值，非空行的分母可能略小于 1。"),
         "cases": [{"R": r, "L": l} for r, l in RAGGED_CASES],
         "case_header": ("| # | R | L | padded (R_pad × W_pad) |\n|---|---|---|---|\n",
                         lambda i, c: f"| {i} | {c['R']:,} | {c['L']:,} | {32 * -(-c['R'] // 32):,} × {32 * -(-c['L'] // 32):,} |"),
