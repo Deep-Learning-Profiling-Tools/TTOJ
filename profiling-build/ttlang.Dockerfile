@@ -12,7 +12,7 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3.12-venv libpython3.12 libgomp1 libnuma1 libhwloc15 libatomic1 \
+        python3.12 python3.12-venv libpython3.12 libgomp1 libnuma1 libhwloc15 libatomic1 zlib1g \
         xz-utils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && python3.12 -m venv /opt/venv \

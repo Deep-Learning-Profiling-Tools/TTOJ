@@ -72,6 +72,14 @@ def main():
     tests = manifest["tests"]
     source = Path(args.solution).read_text()
     report = {"problem": manifest["id"], "solution": args.solution, "cases": []}
+    try:
+        compile(source, "submission.py", "exec")  # the worker rejects syntax errors before any hardware run
+    except SyntaxError as error:
+        print(f"CE (python syntax): {error}")
+        report["verdict"] = "CE"
+        if args.report:
+            Path(args.report).write_text(json.dumps(report, indent=2))
+        return
     base = tempfile.mkdtemp(prefix="ttoj-local-")
     for case_id in parse_cases(args.cases, len(tests)):
         test = tests[case_id - 1]
