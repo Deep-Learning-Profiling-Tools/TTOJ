@@ -531,7 +531,9 @@ class Judge:
                     self.active = None
                 status, message = outcome["status"], ""
                 full_log = outcome["stderr"] + "\n" + outcome["stdout"]
-                if status == RE and mode != "ttnn" and re.search(r"(?:error:|Build failed|compilation failed|JIT compilation|CompileError)", full_log, re.I):
+                compile_failure = (mode == "ttlang" and re.search(r"TTLangCompileError|^error: ", full_log, re.M)) or (
+                    mode not in PYTHON_MODES and re.search(r"(?:error:|Build failed|compilation failed|JIT compilation|CompileError)", full_log, re.I))
+                if status == RE and compile_failure:
                     status = CE
                     await self.send(rid, "next", compilerText=full_log[-10000:])
                 if status is None:
