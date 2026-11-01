@@ -126,6 +126,20 @@ class TTProfileDownloadHandler extends RecordDetailHandler {
 }
 
 exports.apply = function apply(ctx) {
+  // Hydro 5.0.7 parses hydrooj.langs in model/setting before model/system has loaded the database
+  // values, so after a cold start the language table is empty and every submission fails with
+  // "Invalid problem config." Re-apply the stored table once the app has started.
+  const refreshLanguages = () => {
+    try {
+      const { parseLang } = require('@hydrooj/common');
+      const { setting, system } = global.Hydro.model;
+      const parsed = parseLang(system.get('hydrooj.langs'));
+      for (const key of Object.keys(setting.langs)) delete setting.langs[key];
+      Object.assign(setting.langs, parsed);
+      console.log(`tt-site: language table loaded (${Object.keys(parsed).join(', ')})`);
+    } catch (error) { console.warn('tt-site: could not refresh the language table:', error.message); }
+  };
+  ctx.on('app/started', refreshLanguages);
   if (process.env.HYDRO_CLI) return;
   const defaultLanguage = (handler) => {
     // Explicit account/session language choices remain authoritative.
