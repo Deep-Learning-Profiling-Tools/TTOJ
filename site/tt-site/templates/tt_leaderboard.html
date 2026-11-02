@@ -5,7 +5,7 @@
   <div class="tt-card">
     <h2>Leaderboard</h2>
     <p class="tt-lead">Ranked by device kernel time: first kernel start to last kernel end over all cores in the instrumented device pass, median of 10 samples per testcase, geometric mean over testcases. Host dispatch, compilation and data transfers are excluded. Each account is listed once with its fastest accepted submission; speedup is relative to the single-core reference solution.</p>
-    <p class="tt-note">Refreshes every 30 seconds · updated {{ updatedAt }}</p>
+    <p class="tt-note">Updated <time id="tt-board-updated" datetime="{{ updatedAt }}">{{ updatedAt }}</time> · this page does not refresh by itself · <a href="/leaderboard" class="tt-refresh">Refresh now</a></p>
   </div>
   {% for board in boards %}
   <div class="tt-card" id="{{ board.pid }}">
@@ -41,5 +41,5 @@
   </div>
   {% endfor %}
 </div></section></div></div>
-<script>setTimeout(function () { if (!document.querySelector('details[open]')) location.reload(); }, 30000);</script>
+<script>(function () { var t = document.getElementById('tt-board-updated'); if (t) { var d = new Date(t.getAttribute('datetime')); if (!isNaN(d)) t.textContent = d.toLocaleString(); } })();</script>
 {% endblock %}
