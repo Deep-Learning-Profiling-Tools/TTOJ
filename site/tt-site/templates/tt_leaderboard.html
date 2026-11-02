@@ -1,0 +1,44 @@
+{% set page_name = "tt_leaderboard" %}
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row"><div class="columns"><section class="section">
+  <div class="section__header"><h1 class="section__title">{{ _('Leaderboard') }}</h1></div>
+  <div class="section__body typo">
+    <p>{{ _('Ranked by device kernel time: for each measured sample, the first kernel start to the last kernel end over all cores, from the instrumented device pass; the median of 10 samples per testcase, then the geometric mean over all testcases. Host dispatch, compilation and data transfers are not included.') }}</p>
+    <p>{{ _('Each account is listed once, with its fastest accepted submission. Speedup is relative to the single-core reference solution. The page refreshes every 30 seconds.') }} <span style="color:#67748a">{{ _('Updated') }} {{ updatedAt }}</span></p>
+  </div>
+</section></div></div>
+{% for board in boards %}
+<div class="row"><div class="columns"><section class="section" id="{{ board.pid }}">
+  <div class="section__header"><h2 class="section__title"><a href="/p/{{ board.pid }}">{{ board.pid }} · {{ board.title }}</a></h2></div>
+  <div class="section__body typo">
+    <p>{{ _('Reference (single core)') }}: {{ board.reference_geomean_us }} µs · {{ _('Submissions used') }}: {{ board.used }}{% if board.limit %} / {{ board.limit }}{% endif %}</p>
+    {% if board.rows.length %}
+    <div style="overflow-x:auto"><table class="data-table"><thead><tr>
+      <th>#</th><th>{{ _('User') }}</th><th>{{ _('Device time (geomean)') }}</th><th>{{ _('Speedup') }}</th><th>{{ _('Submissions') }}</th><th>{{ _('Best submission') }}</th>
+    </tr></thead><tbody>
+    {% for row in board.rows %}
+      <tr>
+        <td>{{ row.rank }}</td>
+        <td>{{ udict[row.uid].uname if udict[row.uid] else row.uid }}</td>
+        <td><b>{{ row.display_geomean_us }} µs</b></td>
+        <td>{{ row.speedup }}×</td>
+        <td>{{ row.submissions }}</td>
+        <td><a href="/record/{{ row.rid }}">{{ _('View') }}</a>
+          <details><summary>{{ _('Per testcase') }}</summary>
+            <table><thead><tr><th>{{ _('Testcase') }}</th><th>{{ _('Device time') }}</th><th>{{ _('Speedup') }}</th></tr></thead><tbody>
+            {% for c in row.cases %}<tr><td>{{ c.id }}</td><td>{{ c.display_us }} µs</td><td>{{ c.speedup }}×</td></tr>{% endfor %}
+            </tbody></table>
+          </details>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+    {% else %}
+    <p>{{ _('No accepted submission with complete device timing yet.') }}</p>
+    {% endif %}
+  </div>
+</section></div></div>
+{% endfor %}
+<script>setTimeout(function () { if (!document.querySelector('details[open]')) location.reload(); }, 30000);</script>
+{% endblock %}

@@ -60,7 +60,7 @@ def summarize_profile(profile):
     scope = profile.get("timing_scope")
     metadata["timing_scope"] = scope if scope in ("host_submit_to_device_complete", "device_kernel_cycles") else "unknown_redacted"
     # TT-Lang exercise wrappers add numeric-only correctness and perf-summary blocks; copy numbers, never free text.
-    for block in ("correctness", "ttlang_perf_summary"):
+    for block in ("correctness", "traffic"):
         if isinstance(profile.get(block), dict):
             metadata[block] = numeric_block(profile[block])
     if profile.get("exercise") in ("vector-add", "ragged-sum", "ragged-softmax"):

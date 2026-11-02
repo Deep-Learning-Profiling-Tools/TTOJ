@@ -19,7 +19,7 @@
     <p>{{ _('A missing device trace is shown as unavailable, never replaced by host timing. Record wall time remains separate from the warmed measurements.') }}</p>
     <h2>{{ _('Compare experiments fairly') }}</h2>
     <p>{{ _('Use the same inputs, source, image, driver, firmware, device allocation, CPU affinity, warmup, and sample count. The report records these details. Serial scheduling prevents two OJ jobs from sharing the mesh, but does not establish that outside processes are idle.') }}</p>
-    <p>{{ _('Experimental profiles are not used for a performance leaderboard. Check the report quality notes before drawing conclusions.') }}</p>
+    <p>{{ _('The leaderboard ranks TT-Lang problems by device kernel time only: first kernel start to last kernel end over all cores in the instrumented pass, median of 10 samples per testcase, geometric mean over testcases. Host timings and wall time are never ranked.') }}</p>
     <a class="primary rounded button" href="/record">{{ _('View submissions') }}</a>
   </div>
 </section></div></div>

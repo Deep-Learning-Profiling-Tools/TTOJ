@@ -22,8 +22,6 @@ import json
 import math
 import os
 from pathlib import Path
-import statistics
-import subprocess
 import sys
 import time
 
@@ -146,39 +144,6 @@ def load_submission(entry):
     return function
 
 
-def ttlang_perf_summary(logs_dir, sample_count):
-    """Numbers from tt-lang's NoC-trace perf summary for the last ``sample_count`` programs (None if unavailable)."""
-    try:
-        completed = subprocess.run([sys.executable, "-m", "ttl._src.perf_summary", "--path", str(logs_dir), "--json"],
-                                   capture_output=True, text=True, timeout=120, check=False)
-        if completed.returncode != 0:
-            return None
-        text = completed.stdout
-        data = json.loads(text[text.index("{"):])
-        programs = [p for p in data.get("programs", []) if isinstance(p, dict)][-sample_count:]
-        if not programs:
-            return None
-        durations = [float(p["duration_us"]) for p in programs]
-        last = programs[-1]
-        summary = {"program_count": len(programs), "duration_us_median": statistics.median(durations),
-                   "duration_us_min": min(durations), "duration_us_max": max(durations),
-                   "duration_cycles_median": statistics.median(int(p["duration_cycles"]) for p in programs),
-                   "freq_mhz": float(data.get("freq_mhz", 0)), "num_cores": int(last.get("num_cores", 0)),
-                   "grid_x": int(last["grid"][0]) if last.get("grid") else 0, "grid_y": int(last["grid"][1]) if last.get("grid") else 0}
-        for key in ("dram_bytes_read", "dram_bytes_written", "l1_bytes_read", "l1_bytes_written", "multicast_bytes",
-                    "dram_read_count", "dram_write_count", "read_barriers", "write_barriers", "dram_channels"):
-            summary[key] = int(last.get(key, 0))
-        payload = summary["dram_bytes_read"] + summary["dram_bytes_written"] + summary["l1_bytes_read"] + summary["l1_bytes_written"] + summary["multicast_bytes"]
-        summary["effective_gbps"] = payload / (summary["duration_us_median"] * 1e3) if summary["duration_us_median"] > 0 else 0.0
-        sizes = last.get("transfer_sizes") or {}
-        if sizes:
-            summary["transfer_size_min_bytes"] = min(int(k) for k in sizes)
-            summary["transfer_size_max_bytes"] = max(int(k) for k in sizes)
-        return summary
-    except Exception:  # the summary is best-effort diagnostics; never fail the pass because of it
-        return None
-
-
 def main():
     spec = json.load(sys.stdin)
     case = Case(spec)
@@ -206,7 +171,10 @@ def main():
         first_values = case.crop(ttnn.to_torch(out).to(torch.float32))
         passed, correctness, text = case.check(first_values)
         profile = {"schema_version": 1, "correctness": correctness, "first_call_including_jit_ns": first_call_ns,
-                   "exercise": case.exercise, "input_sha256": case.input_sha256}
+                   "exercise": case.exercise, "input_sha256": case.input_sha256,
+                   # Bytes the operation must at least move: every padded input read once, the output written once.
+                   "traffic": {"required_read_bytes": sum(t.numel() * 4 for t in case.padded.values()),
+                               "required_write_bytes": math.prod(case.device_shapes["out"]) * 4}}
         if os.getenv("TT_OJ_PROFILE_ONLY") == "1":
             csv_path = Path(os.getenv("TT_METAL_PROFILER_DIR", "/tmp/generated/profiler")) / ".logs" / "profile_log_device.csv"
             flush = lambda: ttnn.ReadDeviceProfiler(device)  # noqa: E731
@@ -229,10 +197,6 @@ def main():
                     "export_policy": "Profiler flushed after every invocation; export overhead excluded from kernel cycles but changes inter-sample spacing"}})
             if not stable:
                 raise RuntimeError("Results changed during the instrumented device pass")
-            if os.getenv("TT_METAL_DEVICE_PROFILER_NOC_EVENTS") == "1":
-                summary = ttlang_perf_summary(csv_path.parent, 10)
-                if summary:
-                    profile["ttlang_perf_summary"] = summary
         elif os.getenv("TT_OJ_BENCHMARK") == "1":
             warmups = int(os.getenv("TT_OJ_WARMUP", "5"))
             count = int(os.getenv("TT_OJ_SAMPLES", "50"))

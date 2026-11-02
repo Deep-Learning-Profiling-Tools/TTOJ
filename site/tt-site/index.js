@@ -5,6 +5,63 @@ const { RecordDetailHandler } = require(path.join(path.dirname(require.resolve('
 const PROFILE_ROOT = '/data/tt-profiles';
 // Per-problem total submission caps (all users, pretests included) from /problems/*/metadata.json.
 const SUBMISSION_LIMITS = new Map();
+// Leaderboard problems (language ttlang) and their reference solution's per-case device time in µs.
+const LEADERBOARD_PROBLEMS = new Map();
+
+// Device kernel time of one testcase: for every measured sample, first kernel start to last kernel end
+// over all cores and RISCs (tt-metal's DEVICE KERNEL DURATION definition), summed over the programs in
+// that sample; then the median over samples. Host dispatch, JIT and transfers are excluded.
+function deviceTimeNs(device) {
+  if (!device || !device.valid) return null;
+  const samples = device.capture?.sample_count;
+  const mhz = device.clock_mhz;
+  if (!(samples > 0) || !(mhz > 0)) return null;
+  const bySample = new Map();
+  for (const span of device.core_spans || []) {
+    if (!Number.isInteger(span.sample)) continue;
+    const programs = bySample.get(span.sample) || new Map();
+    bySample.set(span.sample, programs);
+    const key = `${span.device_id}:${span.program_index}`;
+    const current = programs.get(key) || { start: Infinity, end: -Infinity };
+    current.start = Math.min(current.start, span.start_cycle);
+    current.end = Math.max(current.end, span.end_cycle);
+    programs.set(key, current);
+  }
+  if (bySample.size !== samples) return null;
+  const cycles = [...bySample.values()]
+    .map((programs) => [...programs.values()].reduce((total, p) => total + (p.end - p.start), 0))
+    .sort((a, b) => a - b);
+  const middle = cycles.length >> 1;
+  const median = cycles.length % 2 ? cycles[middle] : (cycles[middle - 1] + cycles[middle]) / 2;
+  return median * 1000 / mhz;
+}
+
+const geometricMean = (values) => Math.exp(values.reduce((sum, value) => sum + Math.log(value), 0) / values.length);
+const formatUs = (ns) => (Number.isFinite(ns) ? (ns >= 1e5 ? (ns / 1000).toFixed(1) : (ns / 1000).toFixed(2)) : '—');
+
+function deviceSummary(report) {
+  const cases = report?.cases || [];
+  if (!cases.length) return null;
+  const times = cases.map((item) => deviceTimeNs(item.device));
+  const complete = times.every((value) => value > 0);
+  return { complete, times, geomean_ns: complete ? geometricMean(times) : null };
+}
+
+// Finished submissions never change except by rejudge, which publishes a new attempt id.
+const SUMMARY_CACHE = new Map();
+function cachedSummary(rid) {
+  if (!/^[a-f0-9]{24}$/.test(rid)) return null;
+  let latest;
+  try { latest = JSON.parse(fs.readFileSync(path.join(PROFILE_ROOT, rid, 'latest.json'), 'utf8')); }
+  catch { return null; }
+  if (latest.state !== 'terminal') return null;
+  const hit = SUMMARY_CACHE.get(rid);
+  if (hit && hit.attempt === latest.attempt_id) return hit.summary;
+  const report = loadProfile(rid);
+  const summary = report && report.final?.status === 1 ? deviceSummary(report) : null;
+  SUMMARY_CACHE.set(rid, { attempt: latest.attempt_id, summary });
+  return summary;
+}
 
 class SubmissionLimitError extends ForbiddenError {
   constructor(...args) {
@@ -54,7 +111,10 @@ function displayProfile(report) {
   });
   // Keep raw samples, telemetry and thousands of events in the download only.
   // The record page receives a bounded view model rather than the full report.
-  return { scheduler: report.scheduler, quality: report.quality, cases: (report.cases || []).map((item) => {
+  const summary = deviceSummary(report);
+  return { scheduler: report.scheduler, quality: report.quality,
+    device_geomean_us: summary?.complete ? formatUs(summary.geomean_ns) : null,
+    cases: (report.cases || []).map((item) => {
     const host = item.host || {}, device = item.device || {}, statistics = host.statistics || {};
     const expectedDeviceSamples = device.capture?.sample_count;
     const completeCoreGroups = (device.core_statistics || []).filter((group) =>
@@ -65,13 +125,19 @@ function displayProfile(report) {
     return {
       id: item.id,
       correctness: host.correctness || null,
-      perf_summary: device.ttlang_perf_summary ? {
-        ...device.ttlang_perf_summary,
-        display_duration_us: Number.isFinite(device.ttlang_perf_summary.duration_us_median) ? device.ttlang_perf_summary.duration_us_median.toFixed(2) : '—',
-        display_dram_mb: ((device.ttlang_perf_summary.dram_bytes_read + device.ttlang_perf_summary.dram_bytes_written) / 1e6).toFixed(2),
-        display_bw: Number.isFinite(device.ttlang_perf_summary.effective_gbps) ? device.ttlang_perf_summary.effective_gbps.toFixed(1) : '—',
-        display_grid: `${device.ttlang_perf_summary.grid_x}×${device.ttlang_perf_summary.grid_y}`,
-      } : null,
+      display_device_time_us: formatUs(deviceTimeNs(device)),
+      device_summary: (() => {
+        const ns = deviceTimeNs(device);
+        if (!(ns > 0)) return null;
+        const traffic = device.traffic || {};
+        const bytes = (traffic.required_read_bytes || 0) + (traffic.required_write_bytes || 0);
+        const cores = new Set((device.core_spans || []).map((span) => `${span.device_id}:${span.core_x},${span.core_y}`)).size;
+        return {
+          display_time_us: formatUs(ns), cores,
+          display_mb: bytes ? (bytes / 1e6).toFixed(2) : '—',
+          display_bw: bytes ? (bytes / ns).toFixed(1) : '—',
+        };
+      })(),
       host: {
         available: host.available, reason: host.reason,
         warmup_count: host.warmup_count, sample_count: host.sample_count,
@@ -103,6 +169,54 @@ function displayProfile(report) {
       },
     };
   }) };
+}
+
+class TTLeaderboardHandler extends Handler {
+  async get({ domainId }) {
+    const { problem, record, user } = global.Hydro.model;
+    const boards = [];
+    const uids = new Set();
+    for (const pid of [...LEADERBOARD_PROBLEMS.keys()].sort()) {
+      const pdoc = await problem.get(domainId, pid);
+      if (!pdoc) continue;
+      const reference = LEADERBOARD_PROBLEMS.get(pid);
+      const referenceNs = reference && reference.length ? reference.map((us) => us * 1000) : null;
+      const referenceGeomean = referenceNs ? geometricMean(referenceNs) : null;
+      const accepted = await record.coll.find({ domainId, pid: pdoc.docId, status: 1 })
+        .project({ _id: 1, uid: 1, judgeAt: 1 }).toArray();
+      const counts = await record.coll.aggregate([
+        { $match: { domainId, pid: pdoc.docId } }, { $group: { _id: '$uid', count: { $sum: 1 } } },
+      ]).toArray();
+      const submissionsByUser = new Map(counts.map((item) => [item._id, item.count]));
+      const best = new Map();
+      for (const rdoc of accepted) {
+        const summary = cachedSummary(rdoc._id.toString());
+        if (!summary?.complete) continue;
+        const previous = best.get(rdoc.uid);
+        if (!previous || summary.geomean_ns < previous.geomean_ns) best.set(rdoc.uid, { ...summary, rid: rdoc._id.toString(), judgeAt: rdoc.judgeAt });
+      }
+      const rows = [...best.entries()].map(([uid, summary]) => ({
+        uid, rid: summary.rid, judgeAt: summary.judgeAt, geomean_ns: summary.geomean_ns,
+        display_geomean_us: formatUs(summary.geomean_ns),
+        speedup: referenceGeomean ? (referenceGeomean / summary.geomean_ns).toFixed(2) : '—',
+        submissions: submissionsByUser.get(uid) || 0,
+        cases: summary.times.map((ns, index) => ({
+          id: index + 1, display_us: formatUs(ns),
+          speedup: referenceNs && referenceNs[index] ? (referenceNs[index] / ns).toFixed(2) : '—',
+        })),
+      })).sort((a, b) => a.geomean_ns - b.geomean_ns);
+      rows.forEach((row, index) => { row.rank = index + 1; uids.add(row.uid); });
+      const used = await record.coll.countDocuments({ domainId, pid: pdoc.docId });
+      boards.push({
+        pid, title: this.ttProblemTitle ? this.ttProblemTitle(pdoc) : pdoc.title, rows, used,
+        limit: SUBMISSION_LIMITS.get(pid) || null,
+        reference_geomean_us: formatUs(referenceGeomean),
+        reference_cases: referenceNs ? referenceNs.map(formatUs) : [],
+      });
+    }
+    this.response.template = 'tt_leaderboard.html';
+    this.response.body = { boards, udict: await user.getList(domainId, [...uids]), updatedAt: new Date().toISOString() };
+  }
 }
 
 class TTProfilingHandler extends Handler {
@@ -162,6 +276,7 @@ exports.apply = function apply(ctx) {
       const manifest = JSON.parse(fs.readFileSync(path.join('/problems', entry.name, 'metadata.json'), 'utf8'));
       if (manifest.titles) titleTranslations.set(manifest.id, { title: manifest.title, titles: manifest.titles });
       if (Number.isInteger(manifest.submission_limit) && manifest.submission_limit > 0) SUBMISSION_LIMITS.set(manifest.id, manifest.submission_limit);
+      if (manifest.language === 'ttlang') LEADERBOARD_PROBLEMS.set(manifest.id, Array.isArray(manifest.reference_device_us) ? manifest.reference_device_us : null);
     } catch (error) { if (error.code !== 'ENOENT') console.warn(error.message); }
   }
   const englishFor = (handler) => {
@@ -191,6 +306,8 @@ exports.apply = function apply(ctx) {
     if (used >= limit) throw new SubmissionLimitError(used, limit);
   });
   ctx.Route('tt_profiling', '/profiling', TTProfilingHandler);
+  ctx.Route('tt_leaderboard', '/leaderboard', TTLeaderboardHandler, PRIV.PRIV_USER_PROFILE);
+  global.Hydro.ui.inject('Nav', 'tt_leaderboard', { prefix: 'tt_leaderboard', before: 'record_main' }, PRIV.PRIV_USER_PROFILE);
   ctx.Route('tt_profile_json', '/record/:rid/profile', TTProfileDownloadHandler);
   ctx.Route('tt_profile_artifact', '/record/:rid/profile/:artifact', TTProfileDownloadHandler);
   ctx.on('handler/after', async (handler) => {
@@ -218,7 +335,7 @@ exports.apply = function apply(ctx) {
     if (body.pdict) body.pdict = Object.fromEntries(Object.entries(body.pdict).map(([id, pdoc]) => [id, localize(pdoc)]));
     body.ttEnglish = english;
     body.overrideNav = global.Hydro.ui.getNodes('Nav').filter((item) =>
-      ['homepage', 'problem_main', 'record_main', 'domain_dashboard', 'manage_dashboard'].includes(item.name)
+      ['homepage', 'problem_main', 'tt_leaderboard', 'record_main', 'domain_dashboard', 'manage_dashboard'].includes(item.name)
       && (item.name !== 'manage_dashboard' || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)));
     if (handler.response.template === 'record_detail.html' && typeof body.rdoc?.status === 'number') {
       const profile = loadProfile(body.rdoc._id);

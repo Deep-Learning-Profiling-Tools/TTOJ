@@ -26,6 +26,26 @@ from metrics import summarize_profile  # noqa: E402
 MARKER, DETAIL, PROFILE = "TT_OJ_RESULT:", "TT_OJ_DETAIL:", "TT_OJ_PROFILE:"
 
 
+def device_time_us(device):
+    """Same metric as the site: per sample, first kernel start to last kernel end over all cores; median."""
+    if not device.get("valid") or not device.get("clock_mhz"):
+        return None
+    spans = {}
+    for span in device.get("core_spans", []):
+        key = (span["sample"], span["device_id"], span["program_index"])
+        start, end = spans.get(key, (float("inf"), float("-inf")))
+        spans[key] = (min(start, span["start_cycle"]), max(end, span["end_cycle"]))
+    per_sample = {}
+    for (sample, _device, _program), (start, end) in spans.items():
+        per_sample[sample] = per_sample.get(sample, 0) + (end - start)
+    if not per_sample:
+        return None
+    values = sorted(per_sample.values())
+    middle = len(values) // 2
+    median = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2
+    return median / device["clock_mhz"]
+
+
 def parse_cases(text, count):
     if not text:
         return list(range(1, count + 1))
@@ -99,7 +119,7 @@ def main():
             for name in ("TT_METAL_DEVICE_PROFILER", "TT_METAL_DEVICE_PROFILER_NOC_EVENTS", "TT_METAL_PROFILER_MID_RUN_DUMP"):
                 env.pop(name, None)
             if pass_name == "device":
-                env.update({"TT_METAL_DEVICE_PROFILER": "1", "TT_METAL_DEVICE_PROFILER_NOC_EVENTS": "1",
+                env.update({"TT_METAL_DEVICE_PROFILER": "1",
                             "TT_METAL_PROFILER_MID_RUN_DUMP": "1", "TT_METAL_PROFILER_DISABLE_PUSH_TO_TRACY": "1",
                             "TT_METAL_PROFILER_CPP_POST_PROCESS": "0"})
             outcome = run_pass(args.python, workspace, test["input"], env, args.timeout)
@@ -123,9 +143,10 @@ def main():
                     summary["device"] = {key: device.get(key) for key in ("available", "valid", "status", "clock_mhz", "errors", "notes")}
                     summary["device"]["core_statistics"] = device.get("core_statistics", [])[:8]
                     summary["device"]["statistics"] = [{k: v for k, v in s.items() if k != "samples_cycles"} for s in device.get("statistics", [])[:12]]
+                    summary["device_time_us"] = device_time_us(device)
+                    summary["cores"] = len({(s["device_id"], s["core_x"], s["core_y"]) for s in device.get("core_spans", [])})
                 else:
                     summary["device"] = {"available": False, "reason": "no_csv_or_capture"}
-                summary["ttlang_perf_summary"] = (outcome["profile"] or {}).get("ttlang_perf_summary")
             if verdict != "AC":
                 summary["stderr_tail"] = outcome["stderr_tail"][-1500:]
             entry[pass_name] = summary
@@ -133,9 +154,10 @@ def main():
             line = f"case {case_id} [{pass_name}] {verdict} wall={outcome['wall_s']}s"
             if host.get("available"):
                 line += f" host_median={host['statistics']['median_ns'] / 1000:.1f}us p95={host['statistics']['p95_ns'] / 1000:.1f}us"
-            if summary.get("ttlang_perf_summary"):
-                perf = summary["ttlang_perf_summary"]
-                line += f" device_kernel={perf['duration_us_median']:.1f}us cores={perf['num_cores']} dram={(perf['dram_bytes_read'] + perf['dram_bytes_written']) / 1e6:.1f}MB bw={perf['effective_gbps']:.1f}GB/s"
+            if summary.get("device_time_us"):
+                traffic = (outcome["profile"] or {}).get("traffic") or {}
+                moved = traffic.get("required_read_bytes", 0) + traffic.get("required_write_bytes", 0)
+                line += f" device_time={summary['device_time_us']:.2f}us cores={summary['cores']} bw={moved / (summary['device_time_us'] * 1e3):.1f}GB/s"
             if outcome["detail"]:
                 line += f" | {outcome['detail'][:160]}"
             print(line, flush=True)

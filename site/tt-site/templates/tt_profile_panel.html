@@ -3,12 +3,14 @@
   <div class="section__body typo">
     {% if ttProfile %}
       <p><a class="rounded button" href="{{ url('tt_profile_json', rid=rdoc._id) }}">{{ _('Download profiling JSON') }}</a> · <a href="/profiling">{{ _('Measurement guide') }}</a></p>
+      {% if ttProfile.device_geomean_us %}<p><b>{{ _('Device time, geometric mean over testcases (leaderboard metric)') }}: {{ ttProfile.device_geomean_us }} µs</b> · <a href="/leaderboard">{{ _('Leaderboard') }}</a></p>{% endif %}
       {% for c in ttProfile.cases %}
-        <h3>{{ _('Testcase') }} {{ c.id }}</h3>
+        <h3>{{ _('Testcase') }} {{ c.id }}{% if c.display_device_time_us != '—' %} · {{ _('device time') }} {{ c.display_device_time_us }} µs{% endif %}</h3>
         {% if c.correctness %}<p>{{ _('Correctness') }}: {{ c.correctness.mismatch_count }} / {{ c.correctness.checked_count }} {{ _('values outside tolerance') }} · {{ _('max abs error') }} {{ c.correctness.max_abs_err }} · {{ _('worst error/bound') }} {{ c.correctness.max_err_to_bound_ratio }}</p>{% endif %}
-        {% if c.perf_summary %}
-          <p>{{ _('TT-Lang perf summary (device pass, median of {0} programs)').format(c.perf_summary.program_count) }}</p>
-          <table class="tt-perf-summary"><thead><tr><th>{{ _('Kernel duration') }}</th><th>{{ _('Cores') }}</th><th>{{ _('Grid') }}</th><th>{{ _('DRAM read + write') }}</th><th>{{ _('Effective bandwidth') }}</th><th>{{ _('DRAM transfers') }}</th><th>{{ _('Transfer size') }}</th></tr></thead><tbody><tr><td>{{ c.perf_summary.display_duration_us }} µs</td><td>{{ c.perf_summary.num_cores }}</td><td>{{ c.perf_summary.display_grid }}</td><td>{{ c.perf_summary.display_dram_mb }} MB</td><td>{{ c.perf_summary.display_bw }} GB/s</td><td>{{ c.perf_summary.dram_read_count }} / {{ c.perf_summary.dram_write_count }}</td><td>{{ c.perf_summary.transfer_size_min_bytes or '—' }}–{{ c.perf_summary.transfer_size_max_bytes or '—' }} B</td></tr></tbody></table>
+        {% if c.device_summary %}
+          <p>{{ _('Device summary (instrumented pass, median of 10 samples)') }}</p>
+          <table class="tt-device-time"><thead><tr><th>{{ _('Device time') }}</th><th>{{ _('Cores used') }}</th><th>{{ _('Required data (inputs + output)') }}</th><th>{{ _('Effective bandwidth') }}</th></tr></thead><tbody><tr><td><b>{{ c.device_summary.display_time_us }} µs</b></td><td>{{ c.device_summary.cores }}</td><td>{{ c.device_summary.display_mb }} MB</td><td>{{ c.device_summary.display_bw }} GB/s</td></tr></tbody></table>
+          <p class="tt-note">{{ _('Device time: first kernel start to last kernel end over all cores. Effective bandwidth: the bytes the problem must read and write divided by device time; Blackhole peak DRAM bandwidth is about 512 GB/s per chip.') }}</p>
         {% endif %}
         {% if c.host.available %}
           <p>{{ _('Host submission to device completion') }} · {{ _('Warmup') }}: {{ c.host.warmup_count }} · {{ _('Samples') }}: {{ c.host.sample_count }}</p>
@@ -59,7 +61,7 @@
       <h3>{{ _('Measurement quality') }}</h3>
       <p>{{ _('Hardware scheduling') }}: {{ _('Serial, whole mesh reserved') }} · {{ _('CPU affinity') }}: {{ ttProfile.scheduler.cpu_affinity }}</p>
       {% if not ttProfile.scheduler.external_contention_verified %}<p>{{ _('Outside process contention has not been ruled out.') }}</p>{% endif %}
-      {% if not ttProfile.quality.eligible_for_ranking %}<p>{{ _('Experimental profiles are not used for a performance leaderboard.') }}</p>{% endif %}
+      <p>{{ _('Only device kernel time is ranked on the leaderboard; host timings and wall time are diagnostics.') }}</p>
       {% if ttProfile.quality.warnings %}<ul>{% for warning in ttProfile.quality.warnings %}<li>{{ _(warning) }}</li>{% endfor %}</ul>{% endif %}
       </details>
     {% else %}

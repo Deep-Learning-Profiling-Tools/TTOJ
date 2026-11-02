@@ -51,7 +51,7 @@ PROFILES = Path(os.environ.get("PROFILES_DIR", "/profiles"))
 BENCHMARK_CPUSET = os.environ.get("BENCHMARK_CPUSET", "4-7,12-15")
 DEVICE_PROFILER_SUPPORTED = os.environ.get("TT_OJ_DEVICE_PROFILER_SUPPORTED") == "1"
 DEVICE_CSV_PATH = "/tmp/generated/profiler/.logs/profile_log_device.csv"
-DEVICE_ARTIFACT_LIMIT = 16 * 1024 * 1024
+DEVICE_ARTIFACT_LIMIT = 64 * 1024 * 1024  # a 110-core TT-Lang kernel writes ~7 MB per case
 
 
 def compare_numbers(actual, expected, atol=0, rtol=0):
@@ -304,9 +304,8 @@ class Judge:
             environment["TT_METAL_RUNTIME_ROOT"] = "/opt/tt-profiler/libexec/tt-metalium"
         if profiling:
             environment["TT_METAL_DEVICE_PROFILER"] = "1"
-            if mode == "ttlang":
-                # NoC event tracing feeds the TT-Lang perf summary (DRAM bytes, transfer sizes, effective bandwidth).
-                environment["TT_METAL_DEVICE_PROFILER_NOC_EVENTS"] = "1"
+            # NoC event tracing stays off: it logs every transfer (65 MB of CSV for one large multicore
+            # case) and perturbs the kernel time that the TT-Lang leaderboard ranks.
             environment["TT_METAL_PROFILER_DISABLE_PUSH_TO_TRACY"] = "1"
             environment["TT_METAL_PROFILER_CPP_POST_PROCESS"] = "0"
             environment["TT_METAL_PROFILER_MID_RUN_DUMP"] = "1"
@@ -613,7 +612,7 @@ class Judge:
                             if not diagnostic_correct:
                                 raise ValueError("Device diagnostic result failed correctness validation")
                             device_profile = parse_device_profile(diagnostic["profiler_csv"], capture=capture)
-                            for block in ("ttlang_perf_summary", "correctness"):
+                            for block in ("traffic", "correctness"):
                                 if isinstance(metadata.get(block), dict):
                                     device_profile[block] = numeric_block(metadata[block])
                         except (ValueError, TypeError, KeyError) as error:

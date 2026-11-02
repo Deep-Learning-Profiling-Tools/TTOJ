@@ -6,6 +6,7 @@ submitted TT-Lang operation on device 0 and compares against the PyTorch referen
 The expected "output" of every test is the literal verdict marker the wrapper prints on success.
 """
 import json
+import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,14 @@ SEED = 540
 SUBMISSION_LIMIT = 200
 TIME_MS = 180000
 VERDICT = json.dumps({"verdict": "pass"}) + "\n"
+
+# Device time (µs) of the single-core reference solutions per testcase, measured through the staging OJ
+# on a Blackhole p300c (tt-lang 1.1.10.dev20260921). Used for the leaderboard's speedup column.
+REFERENCE_DEVICE_US = {
+    "vector-add": [1.33, 1.327, 1.339, 1.352, 1.336, 1.92, 42.126, 660.164, 10918.5, 10918.517],
+    "ragged-sum": [16.194, 497.853, 346.578, 2405.836, 136.904, 1.717, 2.433, 4.815, 743.227, 166.361],
+    "ragged-softmax": [244.879, 7801.022, 5042.066, 75924.107, 4759.591, 12.921, 25.088, 86.074, 11204.937, 2390.654],
+}
 
 VECTOR_LENGTHS = [1, 31, 33, 1023, 1024, 1025, 65537, 1048577, 16777216, 16777217]
 RAGGED_CASES = [(256, 65), (8192, 96), (1024, 542), (1024, 8192), (32, 16384), (7, 17), (33, 1), (127, 37), (4097, 257), (1, 8193)]
@@ -56,11 +65,16 @@ Inputs are generated from a fixed seed, so every submission sees the same data.
 
 ## Profile summary
 
-Every accepted case returns a profile summary on the record page: the **host timing** of the operation call
-(5 warmups, 50 samples: median, P95, jitter, after JIT compilation), a separate instrumented **device pass**
-with per-RISC kernel cycles (5 warmups, 10 samples), and the **TT-Lang perf summary** of that pass:
-kernel duration, cores used, DRAM bytes read/written, transfer sizes and effective bandwidth. Use the host
-median as "execution time" in your report and say so; parallel stage cycles must not be added together.
+Every accepted case returns a profile summary on the record page. The number that counts is the
+**device time**: in a separate instrumented pass (5 warmups, 10 samples), the time from the first kernel
+start to the last kernel end over all cores, median over the samples. It excludes host dispatch, JIT
+compilation and data transfers. The submission's score for the **leaderboard** is the geometric mean of the
+device times of the {case_count} testcases; the leaderboard lists each account's fastest accepted submission
+and its speedup over the single-core reference ({reference_geomean} µs). Report device times in your report.
+
+The record page also shows the cores your kernel used, its **effective bandwidth** (the bytes the problem must
+read and write divided by device time; Blackhole DRAM peaks at about 512 GB/s), per-RISC kernel cycles per core
+and, for diagnosis only, host-side timing of the call.
 """
 
 COMMON_ZH = """
@@ -90,10 +104,13 @@ FPU 会把 FP32 操作数舍入到约 11 位有效数字，所以容差比 FP32 
 
 ## 性能剖析
 
-每个通过的用例都会在记录页返回性能摘要：operation 调用的**主机计时**（JIT 后 5 次热身、50 次采样：中位数、
-P95、抖动）、单独的插桩**设备 pass**（各 RISC 的 kernel cycles，5 次热身、10 次采样），以及该 pass 的
-**TT-Lang perf summary**：kernel 时长、使用核数、DRAM 读写字节、传输大小与有效带宽。报告里请用主机中位数作为
-"执行时间"并注明；并行 stage 的 cycles 不能相加。
+每个通过的用例都会在记录页返回性能摘要。计分用的是**设备时间**：在单独的插桩 pass 中（5 次热身、10 次采样），
+从所有核心上第一个 kernel 开始到最后一个 kernel 结束的时间，取采样中位数；不含主机调度、JIT 编译和数据传输。
+**排行榜**按 {case_count} 个用例设备时间的几何平均排名，每个账号只列最快的一次通过提交，并显示相对单核参考解
+（{reference_geomean} µs）的加速比。报告里请使用设备时间。
+
+记录页还会显示 kernel 使用的核数、**有效带宽**（题目必须读写的字节数除以设备时间；Blackhole DRAM 峰值约 512 GB/s）、
+每个核心各 RISC 的 kernel cycles，以及仅供诊断的主机端调用计时。
 """
 
 PROBLEMS = {
@@ -159,7 +176,8 @@ def statement(spec, language):
         entry=spec["entry"], harness=spec["harness_" + language], atol=tol["atol"], rtol=tol["rtol"],
         scale=tol["scale"] if language == "en" else {"vector-add": "每个元素的 |a| + |b|", "ragged-sum": "该行有效前缀内 |x| 之和",
                                                       "ragged-softmax": "该元素参考值的绝对值"}[spec["exercise"]],
-        cases=cases, limit=SUBMISSION_LIMIT)
+        cases=cases, limit=SUBMISSION_LIMIT, case_count=len(spec["cases"]),
+        reference_geomean=f"{math.exp(sum(math.log(v) for v in REFERENCE_DEVICE_US[spec['exercise']]) / len(REFERENCE_DEVICE_US[spec['exercise']])):.1f}")
     head = (f"# {spec['title']}\n\n{spec['task_en']}\n\nSubmit one Python file that defines:\n\n```python\nimport ttl\n\n{spec['signature']}\n```\n"
             if language == "en" else
             f"# {spec['title_zh']}\n\n{spec['task_zh']}\n\n提交一个 Python 文件，定义：\n\n```python\nimport ttl\n\n{spec['signature']}\n```\n")
@@ -184,6 +202,7 @@ def main():
             "content": json.dumps({"zh": statement(spec, "zh"), "en": statement(spec, "en")}, ensure_ascii=False),
             "language": "ttlang", "mode": "ttlang", "time_ms": TIME_MS,
             "submission_limit": SUBMISSION_LIMIT,
+            "reference_device_us": REFERENCE_DEVICE_US[spec["exercise"]],
             # The wrapper applies the tolerances; the worker only compares the verdict marker exactly.
             "atol": 0, "rtol": 0, "tolerance": {"atol": tol["atol"], "rtol": tol["rtol"], "scale": tol["scale"]},
             "tests": tests,

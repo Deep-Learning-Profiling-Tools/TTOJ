@@ -30,9 +30,14 @@ or lifecycle events are not reconstructed retrospectively.
 For the CS540 TT-Lang problems (`ttlang` mode) both recipes apply unchanged to the
 submitted `@ttl.operation` call: the host pass times `operation(inputs..., out)` plus
 device synchronization on preallocated FP32 tile tensors (padding, upload and readback
-excluded), and the device pass additionally enables NoC event tracing so that tt-lang's
-perf summary (`ttl._src.perf_summary`) can report kernel duration, cores, DRAM bytes
-and effective bandwidth for the ten selected samples. Correctness is checked inside
+excluded). From the device pass the site derives the **device time** of each case:
+per selected sample, first kernel start to last kernel end over all cores and RISCs
+(tt-metal's DEVICE KERNEL DURATION definition), median over the ten samples. NoC event
+tracing is left off because it logs every transfer and perturbs kernel time. The
+`/leaderboard` page ranks each account's fastest accepted submission by the geometric
+mean of device time over the testcases; host timings and wall time are never ranked.
+Cross-core spans assume the per-core cycle counters are aligned; tt-metal documents
+minor skew between cores. Correctness is checked inside
 the wrapper against a PyTorch reference with the manifest's `tolerance`
 (`|got - want| <= atol + rtol * scale`); the broker only compares the verdict marker.
 The wrapper's one-line correctness detail (mismatch count, max error) is appended to
