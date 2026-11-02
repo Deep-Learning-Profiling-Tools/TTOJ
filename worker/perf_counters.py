@@ -212,6 +212,13 @@ def summarize_counters(parsed: dict) -> dict | None:
         if name in c:
             threads["math"]["reasons"][name.lower()] = c[name]["mean"]
     threads["math"]["reasons"] = dict(sorted(threads["math"]["reasons"].items(), key=lambda kv: -kv[1]))
+    units_max = {
+        "fpu_busy": get("FPU_COUNTER", "max_core"), "sfpu_busy": get("SFPU_COUNTER", "max_core"), "math_busy": get("MATH_COUNTER", "max_core"),
+        "unpacker0_busy": max(x for x in (get("UNPACK0_BUSY_THREAD0", "max_core"), get("UNPACK0_BUSY_THREAD1", "max_core")) if x is not None) if c.get("UNPACK0_BUSY_THREAD0") else None,
+        "unpacker1_busy": max(x for x in (get("UNPACK1_BUSY_THREAD0", "max_core"), get("UNPACK1_BUSY_THREAD1", "max_core")) if x is not None) if c.get("UNPACK1_BUSY_THREAD0") else None,
+        "packer_busy": get("PACKER_BUSY", "max_core"),
+    }
     return {"units": {k: v for k, v in units.items() if v is not None}, "threads": threads,
+            "units_busiest_core": {k: v for k, v in units_max.items() if v is not None},
             "any_thread_stalled": get("ANY_THREAD_STALL"), "cores": parsed.get("cores"),
             "window_us": parsed.get("window_us_median"), "valid": parsed.get("valid")}

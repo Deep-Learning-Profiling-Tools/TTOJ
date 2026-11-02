@@ -63,7 +63,7 @@ function countersView(counters) {
     any_stall_pct: pct(summary.any_thread_stalled),
     fpu_pct: pct(units.fpu_busy), sfpu_pct: pct(units.sfpu_busy), pack_pct: pct(units.packer_busy),
     unpack_pct: pct(Math.max(units.unpacker0_busy ?? -1, units.unpacker1_busy ?? -1) >= 0 ? Math.max(units.unpacker0_busy ?? 0, units.unpacker1_busy ?? 0) : NaN),
-    units: Object.entries(summary.units || {}).map(([key, value]) => ({ key, label: COUNTER_LABELS[key] || key, pct: pct(value) })),
+    units: Object.entries(summary.units || {}).map(([key, value]) => ({ key, label: COUNTER_LABELS[key] || key, pct: pct(value), max_pct: pct((summary.units_busiest_core || {})[key]) })),
     threads: Object.entries(summary.threads || {}).map(([key, thread]) => ({
       key, label: THREAD_LABELS[key] || key, stalled_pct: pct(thread.stalled),
       ipc: Number.isFinite(thread.instructions_per_cycle) ? thread.instructions_per_cycle.toFixed(3) : '—',

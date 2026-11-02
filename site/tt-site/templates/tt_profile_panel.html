@@ -52,13 +52,13 @@
       {% if ttProfile.counters_available %}
       <div class="tt-card">
         <h2>Hardware counters</h2>
-        <p class="tt-lead">Read from the Tensix counter groups FPU, PACK, UNPACK and INSTRN in a separate pass (2 warmups, 3 samples). Thread 0/1/2 are the unpack, math and pack instruction threads of each core.</p>
+        <p class="tt-lead">Read from the Tensix counter groups FPU, PACK, UNPACK and INSTRN in a separate pass (2 warmups, 3 samples). Thread 0/1/2 are the unpack, math and pack instruction threads of each core. With many cores, compare the mean with the busiest core: a low mean and a high maximum means the work is unevenly split.</p>
         {% for c in ttProfile.cases %}{% if c.counters %}
         <details class="tt-case-detail"{% if loop.first %} open{% endif %}>
           <summary>Testcase {{ c.id }} · {{ c.counters.cores }} core{{ 's' if c.counters.cores != 1 }} · window {{ c.counters.window_us }} µs{% if not c.counters.valid %} · <span class="tt-badge warn">incomplete</span>{% endif %}</summary>
           <div class="tt-scroll"><table class="tt-table" style="margin:8px 0 12px">
-            <thead><tr><th>Unit</th><th>Busy (mean over cores)</th></tr></thead>
-            <tbody>{% for u in c.counters.units %}<tr><td>{{ u.label }}</td><td>{{ meter(u.pct) }}</td></tr>{% endfor %}</tbody>
+            <thead><tr><th>Unit</th><th>Busy, mean over cores</th><th>Busy, busiest core</th></tr></thead>
+            <tbody>{% for u in c.counters.units %}<tr><td>{{ u.label }}</td><td>{{ meter(u.pct) }}</td><td>{{ meter(u.max_pct) }}</td></tr>{% endfor %}</tbody>
           </table></div>
           <div class="tt-threads">
             {% for t in c.counters.threads %}
