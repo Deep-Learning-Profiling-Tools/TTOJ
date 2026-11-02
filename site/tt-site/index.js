@@ -3,7 +3,7 @@ const path = require('node:path');
 const { Handler, NotFoundError, ForbiddenError, PRIV } = require('hydrooj');
 const { RecordDetailHandler } = require(path.join(path.dirname(require.resolve('hydrooj/package.json')), 'src/handler/record'));
 const PROFILE_ROOT = '/data/tt-profiles';
-// Per-problem total submission caps (all users, pretests included) from /problems/*/metadata.json.
+// Per-problem submission caps, applied to each account separately (pretests included), from /problems/*/metadata.json.
 const SUBMISSION_LIMITS = new Map();
 // Leaderboard problems (language ttlang) and their reference solution's per-case device time in µs.
 const LEADERBOARD_PROBLEMS = new Map();
@@ -137,19 +137,39 @@ class SubmissionLimitError extends ForbiddenError {
   constructor(...args) {
     super(...args);
     this.name = 'SubmissionLimitError';
-    this.msg = () => 'This problem has reached its submission limit ({0} of {1} submissions used across all accounts). Ask the instructor to raise the limit.';
+    this.msg = () => 'Your account has used its submission limit on this problem ({0} of {1} submissions, pretests included). Ask the instructor to raise the limit.';
   }
 }
 
-async function submissionsUsed(domainId, docId) {
-  // Every record on the problem consumes hardware time: normal submissions and pretests alike.
-  // Rejudging reuses the record, so it is not counted twice.
-  return global.Hydro.model.record.coll.countDocuments({ domainId, pid: docId });
+async function submissionsUsed(domainId, docId, uid) {
+  // The cap is per account and per problem. Every record the account has on the problem consumes
+  // hardware time: normal submissions and pretests alike. Rejudging reuses the record, so it is not counted twice.
+  return global.Hydro.model.record.coll.countDocuments({ domainId, pid: docId, uid });
+}
+
+// Only the record owner and staff (PRIV_READ_RECORD_CODE: super admin, instructor) see judge
+// messages, hardware counters, timing details and the downloadable report of a record.
+function ownerOrStaff(handler, rdoc) {
+  if (!rdoc || !handler.user) return false;
+  return handler.user._id === rdoc.uid || handler.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE);
+}
+
+// Everyone else sees only the verdict and device time per testcase (same formatting as the full view).
+function restrictedProfile(view) {
+  return {
+    device_geomean_us: view.device_geomean_us, device_complete: view.device_complete,
+    cases: view.cases.map((item) => ({ id: item.id, status: item.status, status_name: item.status_name, display_device_time_us: item.display_device_time_us })),
+  };
 }
 
 function quotaBanner(content, used, limit) {
-  const en = `> **Submission quota:** ${used} / ${limit} used on this problem (all accounts, pretests included).\n\n`;
-  const zh = `> **提交配额：** 本题已使用 ${used} / ${limit} 次（所有账号、含 pretest）。\n\n`;
+  // used === null: visitor not logged in, so there is no account to count.
+  const en = used === null
+    ? `> **Submission quota:** each account may submit at most ${limit} times to this problem (pretests included). Log in to see how many your account has used.\n\n`
+    : `> **Submission quota:** your account has used ${used} / ${limit} submissions on this problem (pretests included; every account has its own ${limit}).\n\n`;
+  const zh = used === null
+    ? `> **提交配额：** 每个账号对本题最多可提交 ${limit} 次（含 pretest）。登录后可查看你的账号已用次数。\n\n`
+    : `> **提交配额：** 你的账号在本题已使用 ${used} / ${limit} 次（含 pretest；每个账号各有 ${limit} 次）。\n\n`;
   try {
     const parsed = JSON.parse(content);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -253,7 +273,8 @@ function displayProfile(report) {
   }) };
 }
 
-async function leaderboardFor(domainId, pdoc) {
+// uid: the account whose submission count is reported as `used` (the viewer on /leaderboard, the record owner on a record page).
+async function leaderboardFor(domainId, pdoc, uid = null) {
   const { record } = global.Hydro.model;
   const reference = LEADERBOARD_PROBLEMS.get(pdoc.pid);
   const referenceNs = reference && reference.length ? reference.map((us) => us * 1000) : null;
@@ -282,9 +303,9 @@ async function leaderboardFor(domainId, pdoc) {
     })),
   })).sort((a, b) => a.geomean_ns - b.geomean_ns);
   rows.forEach((row, index) => { row.rank = index + 1; });
-  const used = await record.coll.countDocuments({ domainId, pid: pdoc.docId });
+  const used = uid === null ? null : (submissionsByUser.get(uid) || 0);
   return {
-    pid: pdoc.pid, rows, used, limit: SUBMISSION_LIMITS.get(pdoc.pid) || null,
+    pid: pdoc.pid, rows, used, uid, limit: SUBMISSION_LIMITS.get(pdoc.pid) || null,
     reference_geomean_ns: referenceGeomean, reference_geomean_us: formatUs(referenceGeomean),
     reference_cases: referenceNs ? referenceNs.map(formatUs) : [],
   };
@@ -298,7 +319,7 @@ class TTLeaderboardHandler extends Handler {
     for (const pid of [...LEADERBOARD_PROBLEMS.keys()].sort()) {
       const pdoc = await problem.get(domainId, pid);
       if (!pdoc) continue;
-      const board = await leaderboardFor(domainId, pdoc);
+      const board = await leaderboardFor(domainId, pdoc, this.user._id);
       board.title = this.ttProblemTitle ? this.ttProblemTitle(pdoc) : pdoc.title;
       board.rows.forEach((row) => uids.add(row.uid));
       boards.push(board);
@@ -317,6 +338,7 @@ class TTProfileDownloadHandler extends RecordDetailHandler {
     // Reuse all upstream record, contest, teammate and visibility checks.
     await super.get(args.domainId, this.rdoc._id, false);
     if (typeof this.response.body?.rdoc?.status !== 'number') throw new ForbiddenError();
+    if (!ownerOrStaff(this, this.rdoc)) throw new ForbiddenError();
     const artifact = args.artifact || 'report.json';
     if (artifact !== 'report.json' && !/^case-[1-9][0-9]*-(device|counters)\.csv$/.test(artifact)) throw new NotFoundError();
     const filename = path.join(PROFILE_ROOT, this.rdoc._id.toString(), artifact);
@@ -351,6 +373,14 @@ exports.apply = function apply(ctx) {
   };
   ctx.on('handler/create/http', defaultLanguage);
   ctx.on('handler/create/ws', defaultLanguage);
+  // The record page re-renders record_detail_status.html through this websocket (also once on connect),
+  // so the same owner-or-staff rule applies there.
+  ctx.on('handler/create/ws', (handler) => {
+    if (handler.constructor.name !== 'RecordDetailConnectionHandler') return;
+    const render = handler.renderHTML;
+    handler.renderHTML = (name, args) => render(name, name === 'record_detail_status.html' && !ownerOrStaff(handler, args?.rdoc)
+      ? { ...args, ttRestricted: true } : args);
+  });
   // Block both steps, including existing registration links and administrator sessions.
   // New accounts are created through Hydro's authenticated administration tools.
   ctx.on('handler/create/http', (handler) => {
@@ -388,11 +418,11 @@ exports.apply = function apply(ctx) {
     query.$nor ||= [];
     query.$nor.push({ pid: 'P1000', owner: 1, title: 'A+B Problem' });
   });
-  // Enforce the per-problem cap before Hydro creates the record (runs after prepare, so pdoc is loaded).
+  // Enforce the per-account cap before Hydro creates the record (runs after prepare, so pdoc is loaded).
   ctx.on('handler/before/ProblemSubmit#post', async (handler) => {
     const limit = SUBMISSION_LIMITS.get(handler.pdoc?.pid);
     if (!limit) return;
-    const used = await submissionsUsed(handler.args.domainId, handler.pdoc.docId);
+    const used = await submissionsUsed(handler.args.domainId, handler.pdoc.docId, handler.user._id);
     if (used >= limit) throw new SubmissionLimitError(used, limit);
   });
   ctx.Route('tt_profiling', '/profiling', TTProfilingHandler);
@@ -418,9 +448,9 @@ exports.apply = function apply(ctx) {
       if (handler.UiContext.extraTitleContent === oldTitle) handler.UiContext.extraTitleContent = body.pdoc.title;
       const limit = SUBMISSION_LIMITS.get(body.pdoc.pid);
       if (limit && handler.response.template === 'problem_detail.html' && typeof body.pdoc.content === 'string') {
-        const used = await submissionsUsed(handler.args.domainId, body.pdoc.docId);
+        const used = body.ttLoggedIn ? await submissionsUsed(handler.args.domainId, body.pdoc.docId, handler.user._id) : null;
         body.pdoc = { ...body.pdoc, content: quotaBanner(body.pdoc.content, used, limit) };
-        body.ttSubmissionQuota = { used, limit, remaining: Math.max(0, limit - used) };
+        body.ttSubmissionQuota = used === null ? null : { used, limit, remaining: Math.max(0, limit - used) };
       }
       if (handler.response.template === 'problem_detail.html' && handler.UiContext) {
         const starter = starterFor(body.pdoc.pid);
@@ -436,7 +466,8 @@ exports.apply = function apply(ctx) {
     }
     if (handler.response.template === 'record_detail.html' && body.rdoc && body.pdoc && LEADERBOARD_PROBLEMS.has(body.pdoc.pid)) {
       try {
-        const board = await leaderboardFor(handler.args.domainId, body.pdoc);
+        // `used` counts the record owner's submissions; the tile is shown to the owner and staff only.
+        const board = await leaderboardFor(handler.args.domainId, body.pdoc, body.rdoc.uid);
         const mine = board.rows.find((row) => row.uid === body.rdoc.uid);
         const own = board.rows.find((row) => row.rid === String(body.rdoc._id));
         body.ttRank = { total: board.rows.length, rank: own ? own.rank : null, best_rank: mine ? mine.rank : null,
@@ -451,9 +482,13 @@ exports.apply = function apply(ctx) {
     body.overrideNav = global.Hydro.ui.getNodes('Nav').filter((item) =>
       ['homepage', 'problem_main', 'tt_leaderboard', 'record_main', 'domain_dashboard', 'manage_dashboard'].includes(item.name)
       && (item.name !== 'manage_dashboard' || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)));
-    if (handler.response.template === 'record_detail.html' && typeof body.rdoc?.status === 'number') {
-      const profile = loadProfile(body.rdoc._id);
-      body.ttProfile = profile ? displayProfile(profile) : null;
+    if (handler.response.template === 'record_detail.html' && body.rdoc) {
+      body.ttRestricted = !ownerOrStaff(handler, body.rdoc);
+      if (typeof body.rdoc.status === 'number') {
+        const profile = loadProfile(body.rdoc._id);
+        const view = profile ? displayProfile(profile) : null;
+        body.ttProfile = view && body.ttRestricted ? restrictedProfile(view) : view;
+      }
     }
   });
 };

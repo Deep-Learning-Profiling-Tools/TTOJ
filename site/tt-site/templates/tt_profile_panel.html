@@ -3,18 +3,46 @@
   <div class="section__body">
     {% if ttProfile %}
       {% set accepted = rdoc.status == 1 %}
+      {% set isOwner = rdoc.uid == handler.user._id %}
+      {% if ttRestricted %}
+      {# Viewer is neither the owner nor staff: verdicts and device times only. #}
+      <div class="tt-card">
+        <h2>Performance</h2>
+        <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 10 instrumented samples per testcase, geometric mean over testcases.</p>
+        <div class="tt-stats">
+          <div class="tt-stat"><b>Device time (geomean)</b><span>{{ ttProfile.device_geomean_us or '—' }} µs</span><small>{% if ttRank and ttRank.speedup %}{{ ttRank.speedup }}× vs single-core reference ({{ ttRank.reference_geomean_us }} µs){% elif not ttProfile.device_complete %}needs every testcase accepted{% endif %}</small></div>
+          {% if ttRank %}<div class="tt-stat"><b>Leaderboard</b><span>{% if ttRank.rank %}#{{ ttRank.rank }} <small style="display:inline">of {{ ttRank.total }}</small>{% elif ttRank.best_rank %}#{{ ttRank.best_rank }}{% else %}—{% endif %}</span><small>{% if ttRank.rank %}this submission{% elif ttRank.best_rank %}this account's best submission; this one is slower{% else %}not ranked (not accepted or no device timing){% endif %} · <a href="/leaderboard#{{ pdoc.pid }}">view</a></small></div>{% endif %}
+        </div>
+        <p class="tt-note">Only the owner and the instructor can see judge messages, hardware counters, timing details and the downloadable report.</p>
+      </div>
+      <div class="tt-card">
+        <h2>Testcases</h2>
+        <div class="tt-scroll"><table class="tt-table">
+          <thead><tr><th>#</th><th>Result</th><th class="num">Device time</th></tr></thead>
+          <tbody>
+          {% for c in ttProfile.cases %}
+            <tr>
+              <td>{{ c.id }}</td>
+              <td><span class="tt-badge {{ 'ok' if c.status == 1 else ('muted' if c.status === null else 'bad') }}">{{ c.status_name }}</span></td>
+              <td class="num"><b>{{ c.display_device_time_us }}</b>{% if c.display_device_time_us != '—' %} µs{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      </div>
+      {% else %}
       <div class="tt-card">
         <h2>Performance</h2>
         <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 10 instrumented samples per testcase, geometric mean over testcases. Host times are diagnostics only.</p>
         <div class="tt-stats">
           <div class="tt-stat"><b>Device time (geomean)</b><span>{{ ttProfile.device_geomean_us or '—' }} µs</span><small>{% if ttRank and ttRank.speedup %}{{ ttRank.speedup }}× vs single-core reference ({{ ttRank.reference_geomean_us }} µs){% elif not ttProfile.device_complete %}needs every testcase accepted{% endif %}</small></div>
-          {% if ttRank %}<div class="tt-stat"><b>Leaderboard</b><span>{% if ttRank.rank %}#{{ ttRank.rank }} <small style="display:inline">of {{ ttRank.total }}</small>{% elif ttRank.best_rank %}#{{ ttRank.best_rank }}{% else %}—{% endif %}</span><small>{% if ttRank.rank %}this submission{% elif ttRank.best_rank %}your best submission; this one is slower{% else %}not ranked (not accepted or no device timing){% endif %} · <a href="/leaderboard#{{ pdoc.pid }}">view</a></small></div>{% endif %}
+          {% if ttRank %}<div class="tt-stat"><b>Leaderboard</b><span>{% if ttRank.rank %}#{{ ttRank.rank }} <small style="display:inline">of {{ ttRank.total }}</small>{% elif ttRank.best_rank %}#{{ ttRank.best_rank }}{% else %}—{% endif %}</span><small>{% if ttRank.rank %}this submission{% elif ttRank.best_rank %}{{ 'your' if isOwner else "this account's" }} best submission; this one is slower{% else %}not ranked (not accepted or no device timing){% endif %} · <a href="/leaderboard#{{ pdoc.pid }}">view</a></small></div>{% endif %}
           <div class="tt-stat"><b>Cores used</b><span>{{ ttProfile.overall.cores_max or '—' }}</span><small>max over testcases, of 110 available</small></div>
           {% if ttProfile.counters_available %}
           <div class="tt-stat"><b>FPU / SFPU busy</b><span>{{ ttProfile.overall.fpu_pct|round(0) if ttProfile.overall.fpu_pct !== null else '—' }}% / {{ ttProfile.overall.sfpu_pct|round(0) if ttProfile.overall.sfpu_pct !== null else '—' }}%</span><small>mean over testcases and cores</small></div>
           <div class="tt-stat"><b>Unpack / Pack busy</b><span>{{ ttProfile.overall.unpack_pct|round(0) if ttProfile.overall.unpack_pct !== null else '—' }}% / {{ ttProfile.overall.pack_pct|round(0) if ttProfile.overall.pack_pct !== null else '—' }}%</span><small>busiest unpacker · packer</small></div>
           {% endif %}
-          {% if ttRank and ttRank.limit %}<div class="tt-stat"><b>Submissions used</b><span>{{ ttRank.used }} / {{ ttRank.limit }}</span><small>all accounts, this problem</small></div>{% endif %}
+          {% if ttRank and ttRank.limit %}<div class="tt-stat"><b>Submissions used</b><span>{{ ttRank.used }} / {{ ttRank.limit }}</span><small>{{ 'your account' if isOwner else (udoc.uname if udoc else 'this account') + "'s account" }}, this problem (pretests included)</small></div>{% endif %}
         </div>
         <div class="tt-actions">
           <a href="{{ url('tt_profile_json', rid=rdoc._id) }}">Download report JSON</a>
@@ -30,7 +58,7 @@
           {% for c in ttProfile.cases %}
             <tr>
               <td>{{ c.id }}</td>
-              <td><span class="tt-badge {{ 'ok' if c.status == 1 else ('muted' if c.status is none else 'bad') }}">{{ c.status_name }}</span></td>
+              <td><span class="tt-badge {{ 'ok' if c.status == 1 else ('muted' if c.status === null else 'bad') }}">{{ c.status_name }}</span></td>
               <td class="num"><b>{{ c.display_device_time_us }}</b>{% if c.display_device_time_us != '—' %} µs{% endif %}</td>
               <td class="num">{{ c.device_summary.cores if c.device_summary else '—' }}</td>
               <td class="num">{% if c.device_summary and c.device_summary.display_bw != '—' %}{{ c.device_summary.display_bw }} GB/s{% else %}<span class="tt-sub" title="Judged before traffic accounting was added; rejudge to fill in">—</span>{% endif %}</td>
@@ -99,8 +127,9 @@
           {% endif %}
         </details>
         {% endfor %}
-        <p class="tt-note">Hardware is reserved serially for each submission; CPU affinity: {{ ttProfile.scheduler.cpu_affinity }}. Measurements are diagnostic; outside host workloads are not fully excluded.</p>
+        <p class="tt-note">This submission ran alone on Blackhole chip{% if ttProfile.scheduler.device_ids and ttProfile.scheduler.device_ids.length > 1 %}s{% endif %} {{ ttProfile.scheduler.device_ids|join(', ') if ttProfile.scheduler.device_ids else '—' }} (up to four submissions are judged at once, one chip each); CPU affinity: {{ ttProfile.scheduler.cpu_affinity }}. Measurements are diagnostic; outside host workloads are not fully excluded.</p>
       </div>
+      {% endif %}
     {% else %}
       <div class="tt-card"><h2>Performance</h2><p class="tt-lead">No profiling report yet. The report is written while the submission is judged; refresh the page after it finishes. Older submissions may need a rejudge.</p></div>
     {% endif %}

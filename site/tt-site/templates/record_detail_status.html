@@ -1,3 +1,4 @@
+{% import "components/problem.html" as problem with context %}
 <div class="section visible" id="status" data-status="{{ rdoc.status }}">
   <div class="section__body">
     <div class="tt-card" style="margin-bottom:0">
@@ -11,6 +12,23 @@
         {% if rdoc.testCases.length %}{% set acceptedCases = 0 %}{% for rcdoc in rdoc.testCases %}{% if rcdoc.status == 1 %}{% set acceptedCases = acceptedCases + 1 %}{% endif %}{% endfor %}<span class="tt-sub">{{ acceptedCases }} / {{ rdoc.testCases.length }} testcases accepted</span>{% endif %}
         <span class="tt-sub">{{ problem.render_problem_title(pdoc, tdoc, show_tags=false, show_invisible_flag=false) }} · {{ model.setting.langs[rdoc.lang].display }}</span>
       </div>
+      {% if ttRestricted %}
+        {# Viewer is neither the owner nor staff: verdict per testcase only, no compiler text, messages or judge log. #}
+        {% if rdoc.testCases.length %}
+        <details class="tt-case-detail">
+          <summary>Verdict per testcase</summary>
+          <div class="tt-scroll"><table class="tt-table" style="margin-top:6px">
+            <thead><tr><th>#</th><th>Result</th></tr></thead>
+            <tbody>
+            {% for rcdoc in rdoc.testCases|sort(false,false,'id') %}
+              <tr><td>{{ rcdoc.id }}</td><td><span class="tt-badge {{ 'ok' if rcdoc.status == 1 else 'bad' }}">{{ model.builtin.STATUS_TEXTS[rcdoc.status] }}</span></td></tr>
+            {% endfor %}
+            </tbody>
+          </table></div>
+          <p class="tt-note">Only the owner and the instructor can see judge messages, hardware counters, timing details and the downloadable report.</p>
+        </details>
+        {% endif %}
+      {% else %}
       {% if rdoc.compilerTexts.length %}
         <pre class="compiler-text" style="margin-top:12px">{{ rdoc.compilerTexts|join('\n')|ansi|safe }}<div class="compiler-text-mask"><p><span class="icon icon-expand_more">{{ _('Expand') }}</span></p></div></pre>
       {% endif %}
@@ -38,6 +56,7 @@
           <summary>Judge log</summary>
           <pre class="judge-text">{{ formatJudgeTexts(rdoc.judgeTexts)|ansi|safe }}</pre>
         </details>
+      {% endif %}
       {% endif %}
     </div>
   </div>

@@ -4,14 +4,14 @@
 <div class="row"><div class="columns"><section class="section"><div class="section__body">
   <div class="tt-card">
     <h2>Leaderboard</h2>
-    <p class="tt-lead">Ranked by device kernel time: first kernel start to last kernel end over all cores in the instrumented device pass, median of 10 samples per testcase, geometric mean over testcases. Host dispatch, compilation and data transfers are excluded. Each account is listed once with its fastest accepted submission; speedup is relative to the single-core reference solution.</p>
+    <p class="tt-lead">Ranked by device kernel time: first kernel start to last kernel end over all cores in the instrumented device pass, median of 10 samples per testcase, geometric mean over testcases. Host dispatch, compilation and data transfers are excluded. Each account is listed once with its fastest accepted submission; speedup is relative to the single-core reference solution. The submissions column counts that account's submissions to the problem, pretests included; the quota is per account and per problem, and each problem's header shows your own count.</p>
     <p class="tt-note">Updated <time id="tt-board-updated" datetime="{{ updatedAt }}">{{ updatedAt }}</time> · this page does not refresh by itself · <a href="/leaderboard" class="tt-refresh">Refresh now</a></p>
   </div>
   {% for board in boards %}
   <div class="tt-card" id="{{ board.pid }}">
     <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
       <h2 style="margin:0"><a href="/p/{{ board.pid }}">{{ board.pid }} · {{ board.title }}</a></h2>
-      <span class="tt-rank">reference (single core) <b>{{ board.reference_geomean_us }} µs</b> · submissions used <b>{{ board.used }}{% if board.limit %} / {{ board.limit }}{% endif %}</b></span>
+      <span class="tt-rank">reference (single core) <b>{{ board.reference_geomean_us }} µs</b> · you have used <b>{{ board.used }}{% if board.limit %} / {{ board.limit }}{% endif %}</b> submissions{% if board.limit %} (each account has its own {{ board.limit }}){% endif %}</span>
     </div>
     {% if board.rows.length %}
     <div class="tt-scroll"><table class="tt-table" style="margin-top:10px">

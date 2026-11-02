@@ -58,8 +58,9 @@ Inputs are generated from a fixed seed, so every submission sees the same data.
 ## Limits and quota
 
 - One case at a time, **180 s wall time per case** including TT-Lang compilation, and 8 GB host memory.
-- **This problem accepts at most {limit} submissions in total**, counted over all accounts (pretests included).
-  The problem page shows how many are used. Test locally first; you cannot buy back a wasted submission.
+- **Each account may submit at most {limit} times to this problem** (pretests included); the quota is per account
+  and per problem. The problem page shows how many your account has used. Test locally first; you cannot buy back
+  a wasted submission.
 - Runtime: tt-lang `1.1.10.dev20260921` (bundled ttnn, Blackhole p300c). `ttl.grid_size(dims=1)` and
   `ttl.node(dims=1)` are supported in this version. The starter file is attached as `starter.py`.
 
@@ -103,7 +104,7 @@ FPU 会把 FP32 操作数舍入到约 11 位有效数字，所以容差比 FP32 
 ## 限制与配额
 
 - 串行评测，**每个用例 180 秒墙钟**（含 TT-Lang 编译），8 GB 主机内存。
-- **本题总共最多接受 {limit} 次提交**（所有账号合计，含 pretest）。题目页面会显示已用次数，请先在本地测试。
+- **每个账号对本题最多可提交 {limit} 次**（含 pretest），配额按账号、按题目分别计算。题目页面会显示你的账号已用次数，请先在本地测试。
 - 运行环境：tt-lang `1.1.10.dev20260921`（自带 ttnn，Blackhole p300c），支持 `ttl.grid_size(dims=1)` 与
   `ttl.node(dims=1)`。起始代码见附件 `starter.py`。
 
