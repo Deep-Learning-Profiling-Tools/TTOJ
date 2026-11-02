@@ -33,7 +33,7 @@
               <td><span class="tt-badge {{ 'ok' if c.status == 1 else ('muted' if c.status is none else 'bad') }}">{{ c.status_name }}</span></td>
               <td class="num"><b>{{ c.display_device_time_us }}</b>{% if c.display_device_time_us != '—' %} µs{% endif %}</td>
               <td class="num">{{ c.device_summary.cores if c.device_summary else '—' }}</td>
-              <td class="num">{{ c.device_summary.display_bw if c.device_summary else '—' }}{% if c.device_summary %} GB/s{% endif %}</td>
+              <td class="num">{% if c.device_summary and c.device_summary.display_bw != '—' %}{{ c.device_summary.display_bw }} GB/s{% else %}<span class="tt-sub" title="Judged before traffic accounting was added; rejudge to fill in">—</span>{% endif %}</td>
               {% if ttProfile.counters_available %}
               <td>{{ meter(c.counters.fpu_pct if c.counters else null) }}</td>
               <td>{{ meter(c.counters.sfpu_pct if c.counters else null) }}</td>
