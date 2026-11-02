@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "worker"))
 from device_profile import parse_device_profile  # noqa: E402
 from metrics import summarize_profile  # noqa: E402
+from perf_counters import DEFAULT_MASK, parse_perf_counters, summarize_counters  # noqa: E402
 
 MARKER, DETAIL, PROFILE = "TT_OJ_RESULT:", "TT_OJ_DETAIL:", "TT_OJ_PROFILE:"
 
@@ -104,8 +105,8 @@ def main():
     for case_id in parse_cases(args.cases, len(tests)):
         test = tests[case_id - 1]
         entry = {"id": case_id, "input": json.loads(test["input"])}
-        for pass_name in (["host"] if args.no_device_pass else ["host", "device"]):
-            if pass_name == "device" and entry.get("host", {}).get("verdict") != "AC":
+        for pass_name in (["host"] if args.no_device_pass else ["host", "device", "counters"]):
+            if pass_name != "host" and entry.get("host", {}).get("verdict") != "AC":
                 break
             workspace = Path(base) / f"{case_id}-{pass_name}"
             workspace.mkdir()
@@ -114,11 +115,14 @@ def main():
             profiler_dir = workspace / "generated" / "profiler"
             env = {**os.environ, "TT_OJ_WORKSPACE": str(workspace), "PYTHONUNBUFFERED": "1", "TT_METAL_LOGGER_LEVEL": "warning",
                    "TT_OJ_BENCHMARK": "1" if pass_name == "host" else "0", "TT_OJ_PROFILE_ONLY": "1" if pass_name == "device" else "0",
+                   "TT_OJ_COUNTERS_ONLY": "1" if pass_name == "counters" else "0",
                    "TT_OJ_WARMUP": str(policy["host"]["warmup_count"]), "TT_OJ_SAMPLES": str(policy["host"]["sample_count"]),
                    "TT_OJ_DEVICE_PROFILER_SUPPORTED": "1", "TT_METAL_PROFILER_DIR": str(profiler_dir), "TT_METAL_HOME": str(workspace)}
             for name in ("TT_METAL_DEVICE_PROFILER", "TT_METAL_DEVICE_PROFILER_NOC_EVENTS", "TT_METAL_PROFILER_MID_RUN_DUMP"):
                 env.pop(name, None)
-            if pass_name == "device":
+            if pass_name == "counters":
+                env["TT_METAL_PROFILE_PERF_COUNTERS"] = str(DEFAULT_MASK)
+            if pass_name in ("device", "counters"):
                 env.update({"TT_METAL_DEVICE_PROFILER": "1",
                             "TT_METAL_PROFILER_MID_RUN_DUMP": "1", "TT_METAL_PROFILER_DISABLE_PUSH_TO_TRACY": "1",
                             "TT_METAL_PROFILER_CPP_POST_PROCESS": "0"})
@@ -135,6 +139,15 @@ def main():
             summary = {"verdict": verdict, "wall_s": outcome["wall_s"], "detail": outcome["detail"]}
             if pass_name == "host":
                 summary["host"] = summarize_profile(outcome["profile"]) if outcome["profile"] else {"available": False}
+            elif pass_name == "counters":
+                csv_path = profiler_dir / ".logs" / "profile_log_device.csv"
+                capture = (outcome["profile"] or {}).get("counter_capture")
+                if csv_path.exists():
+                    parsed = parse_perf_counters(csv_path.read_text(), DEFAULT_MASK, capture=capture)
+                    summary["counters"] = {"valid": parsed["valid"], "cores": parsed["cores"], "errors": parsed["errors"],
+                                           "summary": summarize_counters(parsed)}
+                else:
+                    summary["counters"] = {"available": False, "reason": "no_csv"}
             else:
                 csv_path = profiler_dir / ".logs" / "profile_log_device.csv"
                 capture = (outcome["profile"] or {}).get("device_capture")
@@ -154,6 +167,10 @@ def main():
             line = f"case {case_id} [{pass_name}] {verdict} wall={outcome['wall_s']}s"
             if host.get("available"):
                 line += f" host_median={host['statistics']['median_ns'] / 1000:.1f}us p95={host['statistics']['p95_ns'] / 1000:.1f}us"
+            if summary.get("counters", {}).get("summary"):
+                u = summary["counters"]["summary"]["units"]
+                line += " " + " ".join(f"{k}={100 * v:.0f}%" for k, v in u.items())
+                line += f" any_stall={100 * (summary['counters']['summary'].get('any_thread_stalled') or 0):.0f}%"
             if summary.get("device_time_us"):
                 traffic = (outcome["profile"] or {}).get("traffic") or {}
                 moved = traffic.get("required_read_bytes", 0) + traffic.get("required_write_bytes", 0)

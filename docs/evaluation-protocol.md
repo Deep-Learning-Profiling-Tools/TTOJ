@@ -37,7 +37,18 @@ tracing is left off because it logs every transfer and perturbs kernel time. The
 `/leaderboard` page ranks each account's fastest accepted submission by the geometric
 mean of device time over the testcases; host timings and wall time are never ranked.
 Cross-core spans assume the per-core cycle counters are aligned; tt-metal documents
-minor skew between cores. Correctness is checked inside
+minor skew between cores.
+
+A third, separate pass (2 warmups, 3 selected samples) runs with
+`TT_METAL_PROFILE_PERF_COUNTERS=39` (FPU, PACK, UNPACK and INSTRN groups). The
+runtime reads the Tensix counters on every core after each compute kernel and
+appends one `TS_DATA` row per counter to the device CSV; `worker/perf_counters.py`
+decodes them by position (group order of the mask, table order of the bundled
+`hw_counters.h`), divides by the counter window and averages over cores and
+samples. The report stores `cases[].counters` (all counters, per-unit busy
+fractions, per-thread stall fractions and reasons); the raw CSV is published as
+`case-N-counters.csv`. Counter values describe the compute kernel window of each
+core, not the ranked device time. Correctness is checked inside
 the wrapper against a PyTorch reference with the manifest's `tolerance`
 (`|got - want| <= atol + rtol * scale`); the broker only compares the verdict marker.
 The wrapper's one-line correctness detail (mismatch count, max error) is appended to

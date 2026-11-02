@@ -75,6 +75,11 @@ and its speedup over the single-core reference ({reference_geomean} µs). Report
 The record page also shows the cores your kernel used, its **effective bandwidth** (the bytes the problem must
 read and write divided by device time; Blackhole DRAM peaks at about 512 GB/s), per-RISC kernel cycles per core
 and, for diagnosis only, host-side timing of the call.
+
+**Hardware counters.** A third pass reads the Tensix performance counters (FPU, SFPU, unpackers, packer, and the
+three instruction threads) and reports, per testcase, how much of the kernel window each unit was busy, how often
+each thread stalled and why (waiting on semaphores, SrcA/SrcB, unpack/pack/math idle). Use them in your report to
+explain where time goes; the raw 85 counters are downloadable as CSV.
 """
 
 COMMON_ZH = """
@@ -199,7 +204,7 @@ def main():
         metadata.update({
             "id": spec["id"], "title": spec["title"],
             "titles": {"zh": spec["title_zh"], "en": spec["title"]},
-            "content": json.dumps({"zh": statement(spec, "zh"), "en": statement(spec, "en")}, ensure_ascii=False),
+            "content": statement(spec, "en"),  # English only; the site has no language switch
             "language": "ttlang", "mode": "ttlang", "time_ms": TIME_MS,
             "submission_limit": SUBMISSION_LIMIT,
             "reference_device_us": REFERENCE_DEVICE_US[spec["exercise"]],

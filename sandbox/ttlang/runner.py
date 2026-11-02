@@ -197,6 +197,30 @@ def main():
                     "export_policy": "Profiler flushed after every invocation; export overhead excluded from kernel cycles but changes inter-sample spacing"}})
             if not stable:
                 raise RuntimeError("Results changed during the instrumented device pass")
+        elif os.getenv("TT_OJ_COUNTERS_ONLY") == "1":
+            # Hardware performance counters: the runtime reads them after every compute kernel when
+            # TT_METAL_PROFILE_PERF_COUNTERS is set; the judge decodes the rows of the selected samples.
+            csv_path = Path(os.getenv("TT_METAL_PROFILER_DIR", "/tmp/generated/profiler")) / ".logs" / "profile_log_device.csv"
+            flush = lambda: ttnn.ReadDeviceProfiler(device)  # noqa: E731
+            flush()
+            for _ in range(2):
+                invoke()
+                flush()
+            ranges = []
+            for sample in range(1, 4):
+                before = csv_path.stat().st_size if csv_path.exists() else 0
+                invoke()
+                flush()
+                after = csv_path.stat().st_size if csv_path.exists() else 0
+                ranges.append({"sample": sample, "start_byte": before, "end_byte": after})
+            final_values = case.crop(ttnn.to_torch(out).to(torch.float32))
+            stable = bool(torch.equal(first_values, final_values))
+            profile.update({"timing_scope": "hardware_counters", "instrumented": True, "repeatability_verified": stable,
+                "counter_mask": os.getenv("TT_METAL_PROFILE_PERF_COUNTERS", ""),
+                "counter_capture": {"warmup": 2, "sample_count": 3, "selection": "csv_append_byte_ranges",
+                                    "sample_byte_ranges": ranges}})
+            if not stable:
+                raise RuntimeError("Results changed during the counter pass")
         elif os.getenv("TT_OJ_BENCHMARK") == "1":
             warmups = int(os.getenv("TT_OJ_WARMUP", "5"))
             count = int(os.getenv("TT_OJ_SAMPLES", "50"))

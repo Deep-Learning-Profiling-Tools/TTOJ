@@ -71,9 +71,14 @@ accounts), and run in the `tt-oj-ttlang-runtime` image built by
 `profiling-build/build-ttlang.sh` from the tt-lang `1.1.10.dev20260921` wheel
 (bundled ttnn with the device profiler enabled). Besides host timing and device
 kernel cycles, accepted cases record a device summary (device time from first
-kernel start to last kernel end over all cores, cores used, effective bandwidth),
-and `/leaderboard` ranks each account's fastest accepted submission by the
-geometric mean of device time over the testcases. To try a solution
+kernel start to last kernel end over all cores, cores used, effective bandwidth)
+and a third pass reads the Tensix hardware counters (FPU/SFPU/unpacker/packer
+busy fractions, per-thread stalls and stall reasons; `worker/perf_counters.py`).
+`/leaderboard` ranks each account's fastest accepted submission by the geometric
+mean of device time over the testcases. The site is English only, has a
+light/dark toggle in the navigation, and opens TT-Lang problems in a split
+workspace (statement left, editor with the starter code right, submissions
+below). To try a solution
 without Hydro or Docker: `python3 tools/ttlang_local_judge.py --problem
 ttlang-vector-add --solution problems/ttlang-vector-add/accepted.py`.
 For C++, submit the device kernel, not a host `main()`. The trusted host harness

@@ -1,71 +1,108 @@
+{% macro meter(value, stall=false) %}{% if value !== null and value !== undefined %}<span class="tt-meter{% if stall %} stall{% endif %}"><i style="--w:{{ value|round(1) }}%"></i><span>{{ value|round(1) }}%</span></span>{% else %}<span class="tt-sub">—</span>{% endif %}{% endmacro %}
 <section class="section" id="tt-profile">
-  <div class="section__header"><h2 class="section__title">{{ _('Profiling') }}</h2></div>
-  <div class="section__body typo">
+  <div class="section__body">
     {% if ttProfile %}
-      <p><a class="rounded button" href="{{ url('tt_profile_json', rid=rdoc._id) }}">{{ _('Download profiling JSON') }}</a> · <a href="/profiling">{{ _('Measurement guide') }}</a></p>
-      {% if ttProfile.device_geomean_us %}<p><b>{{ _('Device time, geometric mean over testcases (leaderboard metric)') }}: {{ ttProfile.device_geomean_us }} µs</b> · <a href="/leaderboard">{{ _('Leaderboard') }}</a></p>{% endif %}
-      {% for c in ttProfile.cases %}
-        <h3>{{ _('Testcase') }} {{ c.id }}{% if c.display_device_time_us != '—' %} · {{ _('device time') }} {{ c.display_device_time_us }} µs{% endif %}</h3>
-        {% if c.correctness %}<p>{{ _('Correctness') }}: {{ c.correctness.mismatch_count }} / {{ c.correctness.checked_count }} {{ _('values outside tolerance') }} · {{ _('max abs error') }} {{ c.correctness.max_abs_err }} · {{ _('worst error/bound') }} {{ c.correctness.max_err_to_bound_ratio }}</p>{% endif %}
-        {% if c.device_summary %}
-          <p>{{ _('Device summary (instrumented pass, median of 10 samples)') }}</p>
-          <table class="tt-device-time"><thead><tr><th>{{ _('Device time') }}</th><th>{{ _('Cores used') }}</th><th>{{ _('Required data (inputs + output)') }}</th><th>{{ _('Effective bandwidth') }}</th></tr></thead><tbody><tr><td><b>{{ c.device_summary.display_time_us }} µs</b></td><td>{{ c.device_summary.cores }}</td><td>{{ c.device_summary.display_mb }} MB</td><td>{{ c.device_summary.display_bw }} GB/s</td></tr></tbody></table>
-          <p class="tt-note">{{ _('Device time: first kernel start to last kernel end over all cores. Effective bandwidth: the bytes the problem must read and write divided by device time; Blackhole peak DRAM bandwidth is about 512 GB/s per chip.') }}</p>
-        {% endif %}
-        {% if c.host.available %}
-          <p>{{ _('Host submission to device completion') }} · {{ _('Warmup') }}: {{ c.host.warmup_count }} · {{ _('Samples') }}: {{ c.host.sample_count }}</p>
-          <table><thead><tr><th>{{ _('Median') }}</th><th>P95</th><th>{{ _('Minimum') }}</th><th>{{ _('Maximum') }}</th><th>MAD</th><th>CV</th></tr></thead><tbody><tr><td>{{ c.host.display.median }} µs</td><td>{{ c.host.display.p95 }} µs</td><td>{{ c.host.display.min }} µs</td><td>{{ c.host.display.max }} µs</td><td>{{ c.host.display.mad }} µs</td><td>{{ c.host.display.cv }}%</td></tr></tbody></table>
-          <details class="tt-host-details"><summary>{{ _('Host timing details') }}</summary>
-            <p>{{ _('Clock resolution') }}: {{ c.host.clock_resolution_ns }} ns. {{ _('Clock resolution is not measurement accuracy.') }}</p>
-            {% if c.host.statistics.median_ci95_ns %}<p>{{ _('Empirical median interval (95%)') }}: {{ c.host.display.ci_low }}–{{ c.host.display.ci_high }} µs. {{ _('Consecutive samples may be correlated; this bootstrap interval assumes independence.') }}</p>{% endif %}
+      {% set accepted = rdoc.status == 1 %}
+      <div class="tt-card">
+        <h2>Performance</h2>
+        <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 10 instrumented samples per testcase, geometric mean over testcases. Host times are diagnostics only.</p>
+        <div class="tt-stats">
+          <div class="tt-stat"><b>Device time (geomean)</b><span>{{ ttProfile.device_geomean_us or '—' }} µs</span><small>{% if ttRank and ttRank.speedup %}{{ ttRank.speedup }}× vs single-core reference ({{ ttRank.reference_geomean_us }} µs){% elif not ttProfile.device_complete %}needs every testcase accepted{% endif %}</small></div>
+          {% if ttRank %}<div class="tt-stat"><b>Leaderboard</b><span>{% if ttRank.rank %}#{{ ttRank.rank }} <small style="display:inline">of {{ ttRank.total }}</small>{% elif ttRank.best_rank %}#{{ ttRank.best_rank }}{% else %}—{% endif %}</span><small>{% if ttRank.rank %}this submission{% elif ttRank.best_rank %}your best submission; this one is slower{% else %}not ranked (not accepted or no device timing){% endif %} · <a href="/leaderboard#{{ pdoc.pid }}">view</a></small></div>{% endif %}
+          <div class="tt-stat"><b>Cores used</b><span>{{ ttProfile.overall.cores_max or '—' }}</span><small>max over testcases, of 110 available</small></div>
+          {% if ttProfile.counters_available %}
+          <div class="tt-stat"><b>FPU / SFPU busy</b><span>{{ ttProfile.overall.fpu_pct|round(0) if ttProfile.overall.fpu_pct !== null else '—' }}% / {{ ttProfile.overall.sfpu_pct|round(0) if ttProfile.overall.sfpu_pct !== null else '—' }}%</span><small>mean over testcases and cores</small></div>
+          <div class="tt-stat"><b>Unpack / Pack busy</b><span>{{ ttProfile.overall.unpack_pct|round(0) if ttProfile.overall.unpack_pct !== null else '—' }}% / {{ ttProfile.overall.pack_pct|round(0) if ttProfile.overall.pack_pct !== null else '—' }}%</span><small>busiest unpacker · packer</small></div>
+          {% endif %}
+          {% if ttRank and ttRank.limit %}<div class="tt-stat"><b>Submissions used</b><span>{{ ttRank.used }} / {{ ttRank.limit }}</span><small>all accounts, this problem</small></div>{% endif %}
+        </div>
+        <div class="tt-actions">
+          <a href="{{ url('tt_profile_json', rid=rdoc._id) }}">Download report JSON</a>
+          <a href="/profiling">How these are measured</a>
+        </div>
+      </div>
+
+      <div class="tt-card">
+        <h2>Testcases</h2>
+        <div class="tt-scroll"><table class="tt-table">
+          <thead><tr><th>#</th><th>Result</th><th class="num">Device time</th><th class="num">Cores</th><th class="num">Bandwidth</th>{% if ttProfile.counters_available %}<th>FPU</th><th>SFPU</th><th>Unpack</th><th>Pack</th><th>Stalled</th>{% endif %}<th class="num">Host median</th></tr></thead>
+          <tbody>
+          {% for c in ttProfile.cases %}
+            <tr>
+              <td>{{ c.id }}</td>
+              <td><span class="tt-badge {{ 'ok' if c.status == 1 else ('muted' if c.status is none else 'bad') }}">{{ c.status_name }}</span></td>
+              <td class="num"><b>{{ c.display_device_time_us }}</b>{% if c.display_device_time_us != '—' %} µs{% endif %}</td>
+              <td class="num">{{ c.device_summary.cores if c.device_summary else '—' }}</td>
+              <td class="num">{{ c.device_summary.display_bw if c.device_summary else '—' }}{% if c.device_summary %} GB/s{% endif %}</td>
+              {% if ttProfile.counters_available %}
+              <td>{{ meter(c.counters.fpu_pct if c.counters else null) }}</td>
+              <td>{{ meter(c.counters.sfpu_pct if c.counters else null) }}</td>
+              <td>{{ meter(c.counters.unpack_pct if c.counters else null) }}</td>
+              <td>{{ meter(c.counters.pack_pct if c.counters else null) }}</td>
+              <td>{{ meter(c.counters.any_stall_pct if c.counters else null, true) }}</td>
+              {% endif %}
+              <td class="num tt-sub">{{ c.host.display.median if c.host.available else '—' }}{% if c.host.available %} µs{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+        <p class="tt-note">Bandwidth = bytes the problem must read and write ÷ device time (Blackhole DRAM peak ≈ 512 GB/s per chip). FPU/SFPU/Unpack/Pack = fraction of the kernel window the unit was busy, averaged over cores. Stalled = fraction of the window in which some instruction thread was stalled.</p>
+      </div>
+
+      {% if ttProfile.counters_available %}
+      <div class="tt-card">
+        <h2>Hardware counters</h2>
+        <p class="tt-lead">Read from the Tensix counter groups FPU, PACK, UNPACK and INSTRN in a separate pass (2 warmups, 3 samples). Thread 0/1/2 are the unpack, math and pack instruction threads of each core.</p>
+        {% for c in ttProfile.cases %}{% if c.counters %}
+        <details class="tt-case-detail"{% if loop.first %} open{% endif %}>
+          <summary>Testcase {{ c.id }} · {{ c.counters.cores }} core{{ 's' if c.counters.cores != 1 }} · window {{ c.counters.window_us }} µs{% if not c.counters.valid %} · <span class="tt-badge warn">incomplete</span>{% endif %}</summary>
+          <div class="tt-scroll"><table class="tt-table" style="margin:8px 0 12px">
+            <thead><tr><th>Unit</th><th>Busy (mean over cores)</th></tr></thead>
+            <tbody>{% for u in c.counters.units %}<tr><td>{{ u.label }}</td><td>{{ meter(u.pct) }}</td></tr>{% endfor %}</tbody>
+          </table></div>
+          <div class="tt-threads">
+            {% for t in c.counters.threads %}
+            <div class="tt-thread"><b>{{ t.label }}</b>
+              <div>stalled {{ meter(t.stalled_pct, true) }}</div>
+              <div class="tt-sub">{{ t.ipc }} instructions / cycle</div>
+              {% if t.reasons.length %}<ul>{% for r in t.reasons %}<li><span>{{ r.label }}</span><span>{{ r.pct|round(1) }}%</span></li>{% endfor %}</ul>{% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          <details style="margin-top:8px"><summary class="tt-sub">All {{ c.counters.raw.length }} counters</summary>
+            <div class="tt-scroll"><table class="tt-table tt-mono"><thead><tr><th>Counter</th><th class="num">Mean over cores</th><th class="num">Busiest core</th></tr></thead>
+            <tbody>{% for r in c.counters.raw %}<tr><td>{{ r.name }}</td><td class="num">{{ r.mean }}</td><td class="num">{{ r.max_core }}</td></tr>{% endfor %}</tbody></table></div>
+            <p class="tt-note">Percentages: counter cycles ÷ window cycles. Values without % are events per cycle.</p>
           </details>
-        {% else %}<p>{{ _('Host timing is unavailable for this testcase.') }} {{ _(c.host.reason or '') }}</p>{% endif %}
-        {% if c.device.available %}
-          {% if c.device.summary %}
-          <p>{{ _('Device timing — slowest core median') }}</p>
-          <table class="tt-device-summary"><thead><tr><th>{{ _('Median') }}</th><th>P95</th><th>{{ _('Samples') }}</th><th>{{ _('Core') }}</th><th>{{ _('Occurrence') }}</th></tr></thead><tbody><tr><td>{{ c.device.summary.display_median_us }} µs</td><td>{{ c.device.summary.display_p95_us }} µs</td><td>{{ c.device.summary.count }}</td><td>{{ c.device.summary.display_core }}</td><td>{{ c.device.summary.program_index }}</td></tr></tbody></table>
+          {% for artifact in c.counters.artifacts %}<p class="tt-note"><a href="{{ url('tt_profile_artifact', rid=rdoc._id, artifact=artifact) }}">Download raw counter CSV</a></p>{% endfor %}
+        </details>
+        {% endif %}{% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="tt-card">
+        <h2>Device timing details</h2>
+        <p class="tt-lead">Per-core, per-RISC kernel cycles from the instrumented pass (5 warmups, 10 samples). BRISC and NCRISC run the data-movement kernels; TRISC0/1/2 run unpack, math and pack. Parallel stages overlap, so their durations must not be summed.</p>
+        {% for c in ttProfile.cases %}
+        <details class="tt-case-detail">
+          <summary>Testcase {{ c.id }} · device time {{ c.display_device_time_us }} µs{% if c.device.available and not c.device.valid %} · <span class="tt-badge warn">capture incomplete</span>{% endif %}</summary>
+          {% if c.device.available %}
+            <p class="tt-note">Device clock {{ c.device.clock_mhz or '—' }} MHz · showing {{ c.device.statistics.length }} of {{ c.device.statistics_count }} core/stage groups.</p>
+            <div class="tt-scroll"><table class="tt-table tt-mono"><thead><tr><th>Core</th><th>RISC</th><th>Zone</th><th class="num">Samples</th><th class="num">Median µs</th><th class="num">P95 µs</th><th class="num">Median cycles</th></tr></thead>
+            <tbody>{% for d in c.device.statistics %}<tr><td>{{ d.display_core }}</td><td>{{ d.risc }}</td><td>{{ d.zone }}</td><td class="num">{{ d.count }}</td><td class="num">{{ d.display_median_us }}</td><td class="num">{{ d.display_p95_us }}</td><td class="num">{{ d.median_cycles }}</td></tr>{% endfor %}</tbody></table></div>
+            {% for artifact in c.device.artifacts %}{% if artifact.endsWith('.csv') %}<p class="tt-note"><a href="{{ url('tt_profile_artifact', rid=rdoc._id, artifact=artifact) }}">Download device CSV</a> · {{ artifact }}</p>{% endif %}{% endfor %}
+          {% else %}
+            <p class="tt-note">No device capture for this testcase. {{ _(c.device.reason or '') }}</p>
           {% endif %}
-          {% if not c.device.valid %}<p>{{ _('This device capture is incomplete; consult the raw report before using these events.') }}</p>{% endif %}
-          <details class="tt-device-details"><summary>{{ _('Device timing details') }}</summary>
-          <p>{{ _('Device timestamp zones by core and stage; parallel durations must not be summed.') }} {{ _('Device clock') }}: {{ c.device.clock_mhz or '—' }} MHz</p>
-          {% if c.device.capture %}<p>{{ _('Warmup') }}: {{ c.device.display_warmup }} · {{ _('Samples') }}: {{ c.device.display_samples }}</p>{% endif %}
-          <p>{{ _('The device summary selects the core and occurrence with the largest median. It is not total chip elapsed time.') }}</p>
-          {% if c.device.statistics %}
-          <h4>{{ _('Repeated device timings by core and stage') }}</h4>
-          <p>{{ _('Showing {0} of {1} stage groups. Download the JSON for all groups.').format(c.device.statistics.length, c.device.statistics_count) }}</p>
-          <p>{{ _('Device timings are collected in a separate pass with the device profiler enabled. Host timings use the same SDK with the device profiler disabled.') }}</p>
-          <div style="overflow-x:auto"><table><thead><tr><th>{{ _('Device') }}</th><th>{{ _('Core') }}</th><th>{{ _('Stage') }}</th><th>{{ _('Zone') }}</th><th>{{ _('Occurrence') }}</th><th>{{ _('Samples') }}</th><th>{{ _('Median') }} ({{ _('Cycles') }})</th><th>P95 ({{ _('Cycles') }})</th><th>{{ _('Minimum') }} ({{ _('Cycles') }})</th><th>{{ _('Maximum') }} ({{ _('Cycles') }})</th><th>{{ _('Median') }} (µs)</th><th>P95 (µs)</th></tr></thead><tbody>
-          {% for d in c.device.statistics %}<tr><td>{{ d.device_id }}</td><td>{{ d.display_core }}</td><td>{{ d.risc }}</td><td>{{ d.zone }}</td><td>{{ d.program_index }}</td><td>{{ d.count }}</td><td>{{ d.median_cycles }}</td><td>{{ d.p95_cycles }}</td><td>{{ d.min_cycles }}</td><td>{{ d.max_cycles }}</td><td>{{ d.display_median_us }}</td><td>{{ d.display_p95_us }}</td></tr>{% endfor %}
-          </tbody></table></div>
+          {% if c.host.available %}
+            <p class="tt-note">Host-side timing of the call (diagnostic): median {{ c.host.display.median }} µs · P95 {{ c.host.display.p95 }} µs · CV {{ c.host.display.cv }}% · {{ c.host.sample_count }} samples after {{ c.host.warmup_count }} warmups.</p>
           {% endif %}
-          {% if c.device.core_statistics %}
-          <h4>{{ _('Same-core kernel envelope') }}</h4>
-          <p>{{ _('The envelope spans the earliest start to the latest end within one core and occurrence. It is not a sum of parallel stages or total chip elapsed time.') }}</p>
-          <p>{{ _('Showing {0} of {1} core groups. Download the JSON for all groups.').format(c.device.core_statistics.length, c.device.core_statistics_count) }}</p>
-          <div style="overflow-x:auto"><table><thead><tr><th>{{ _('Device') }}</th><th>{{ _('Core') }}</th><th>{{ _('Occurrence') }}</th><th>{{ _('Samples') }}</th><th>{{ _('Median') }} ({{ _('Cycles') }})</th><th>P95 ({{ _('Cycles') }})</th><th>{{ _('Median') }} (µs)</th><th>P95 (µs)</th></tr></thead><tbody>
-          {% for d in c.device.core_statistics %}<tr><td>{{ d.device_id }}</td><td>{{ d.display_core }}</td><td>{{ d.program_index }}</td><td>{{ d.count }}</td><td>{{ d.median_cycles }}</td><td>{{ d.p95_cycles }}</td><td>{{ d.display_median_us }}</td><td>{{ d.display_p95_us }}</td></tr>{% endfor %}
-          </tbody></table></div>
-          {% endif %}
-          <details><summary>{{ _('Raw device events') }}</summary>
-          <p>{{ _('Showing {0} of {1} raw device events. Download the CSV for the full trace.').format(c.device.kernels.length, c.device.kernel_count) }}</p>
-          <div style="overflow-x:auto"><table><thead><tr><th>{{ _('Core') }}</th><th>{{ _('Stage') }}</th><th>{{ _('Zone') }}</th><th>{{ _('Cycles') }}</th><th>{{ _('Duration') }}</th></tr></thead><tbody>
-          {% for k in c.device.kernels %}<tr><td>{{ k.display_core }}</td><td>{{ k.risc }}</td><td>{{ k.zone }}</td><td>{{ k.duration_cycles }}</td><td>{{ k.display_us }} µs</td></tr>{% endfor %}
-          </tbody></table></div></details>
-          </details>
-          {% for artifact in c.device.artifacts %}{% if artifact.endsWith('.csv') %}<a href="{{ url('tt_profile_artifact', rid=rdoc._id, artifact=artifact) }}">{{ _('Download device CSV') }} · {{ artifact }}</a>{% endif %}{% endfor %}
-        {% else %}<p>{{ _('Device timing is unavailable for this testcase.') }} {{ _(c.device.reason or '') }}</p>{% endif %}
-      {% endfor %}
-      <details class="tt-measurement-notes"><summary>{{ _('Measurement notes') }}</summary>
-      <p>{{ _('Repeated timings after warmup are separate from container wall time.') }}</p>
-      <p>{{ _('The CSV clock is a snapshot taken when the profiler initializes. Microsecond conversions assume it stays constant; frequency changes are not tracked for each event.') }}</p>
-      <h3>{{ _('Measurement quality') }}</h3>
-      <p>{{ _('Hardware scheduling') }}: {{ _('Serial, whole mesh reserved') }} · {{ _('CPU affinity') }}: {{ ttProfile.scheduler.cpu_affinity }}</p>
-      {% if not ttProfile.scheduler.external_contention_verified %}<p>{{ _('Outside process contention has not been ruled out.') }}</p>{% endif %}
-      <p>{{ _('Only device kernel time is ranked on the leaderboard; host timings and wall time are diagnostics.') }}</p>
-      {% if ttProfile.quality.warnings %}<ul>{% for warning in ttProfile.quality.warnings %}<li>{{ _(warning) }}</li>{% endfor %}</ul>{% endif %}
-      </details>
+        </details>
+        {% endfor %}
+        <p class="tt-note">Hardware is reserved serially for each submission; CPU affinity: {{ ttProfile.scheduler.cpu_affinity }}. Measurements are diagnostic; outside host workloads are not fully excluded.</p>
+      </div>
     {% else %}
-      <p>{{ _('No profiling report is available for this submission yet. Refresh after judging finishes; older submissions may need a rejudge.') }}</p>
+      <div class="tt-card"><h2>Performance</h2><p class="tt-lead">No profiling report yet. The report is written while the submission is judged; refresh the page after it finishes. Older submissions may need a rejudge.</p></div>
     {% endif %}
   </div>
 </section>

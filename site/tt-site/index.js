@@ -7,6 +7,76 @@ const PROFILE_ROOT = '/data/tt-profiles';
 const SUBMISSION_LIMITS = new Map();
 // Leaderboard problems (language ttlang) and their reference solution's per-case device time in µs.
 const LEADERBOARD_PROBLEMS = new Map();
+// Problem id -> folder under /problems (for the starter code shown in the editor).
+const PROBLEM_FOLDERS = new Map();
+const STARTER_CACHE = new Map();
+
+function starterFor(pid) {
+  if (!STARTER_CACHE.has(pid)) {
+    const folder = PROBLEM_FOLDERS.get(pid);
+    let text = null;
+    if (folder) {
+      for (const name of ['starter.py', 'starter.cpp']) {
+        const file = path.join(folder, name);
+        if (fs.existsSync(file)) { text = fs.readFileSync(file, 'utf8'); break; }
+      }
+    }
+    STARTER_CACHE.set(pid, text);
+  }
+  return STARTER_CACHE.get(pid);
+}
+
+// The site is English only: statements stored as {"zh": ..., "en": ...} render their English text.
+function englishContent(content) {
+  if (typeof content !== 'string') return content;
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      if (typeof parsed.en === 'string') return parsed.en;
+      const first = Object.values(parsed).find((value) => typeof value === 'string');
+      if (first) return first;
+    }
+  } catch { /* plain markdown */ }
+  return content;
+}
+
+const pct = (value) => (Number.isFinite(value) ? Math.max(0, Math.min(100, value * 100)) : null);
+const COUNTER_LABELS = {
+  fpu_busy: 'FPU (matrix unit) busy', sfpu_busy: 'SFPU (vector unit) busy', math_busy: 'Math pipeline busy',
+  unpacker0_busy: 'Unpacker 0 busy', unpacker1_busy: 'Unpacker 1 busy', packer_busy: 'Packer busy',
+  waiting_for_thcon_idle: 'waiting for ThCon idle', waiting_for_unpack_idle: 'waiting for unpacker idle',
+  waiting_for_pack_idle: 'waiting for packer idle', waiting_for_math_idle: 'waiting for math idle',
+  waiting_for_move_idle: 'waiting for move idle', waiting_for_cfg_idle: 'waiting for config idle',
+  waiting_for_sfpu_idle: 'waiting for SFPU idle', waiting_for_nonzero_semaphore: 'waiting on semaphore (data not ready)',
+  waiting_for_nonfull_semaphore: 'waiting on semaphore (buffer full)',
+  waiting_for_srca_valid: 'waiting for SrcA valid', waiting_for_srcb_valid: 'waiting for SrcB valid',
+  waiting_for_srca_clear: 'waiting for SrcA clear', waiting_for_srcb_clear: 'waiting for SrcB clear',
+};
+const THREAD_LABELS = { unpack: 'Unpack thread (TRISC0)', math: 'Math thread (TRISC1)', pack: 'Pack thread (TRISC2)' };
+
+function countersView(counters) {
+  const summary = counters?.summary;
+  if (!summary) return null;
+  const units = summary.units || {};
+  return {
+    valid: !!summary.valid, cores: summary.cores, window_us: Number.isFinite(summary.window_us) ? summary.window_us.toFixed(2) : '—',
+    any_stall_pct: pct(summary.any_thread_stalled),
+    fpu_pct: pct(units.fpu_busy), sfpu_pct: pct(units.sfpu_busy), pack_pct: pct(units.packer_busy),
+    unpack_pct: pct(Math.max(units.unpacker0_busy ?? -1, units.unpacker1_busy ?? -1) >= 0 ? Math.max(units.unpacker0_busy ?? 0, units.unpacker1_busy ?? 0) : NaN),
+    units: Object.entries(summary.units || {}).map(([key, value]) => ({ key, label: COUNTER_LABELS[key] || key, pct: pct(value) })),
+    threads: Object.entries(summary.threads || {}).map(([key, thread]) => ({
+      key, label: THREAD_LABELS[key] || key, stalled_pct: pct(thread.stalled),
+      ipc: Number.isFinite(thread.instructions_per_cycle) ? thread.instructions_per_cycle.toFixed(3) : '—',
+      reasons: Object.entries(thread.reasons || {}).filter(([, value]) => value >= 0.005).slice(0, 5)
+        .map(([reason, value]) => ({ label: COUNTER_LABELS[reason] || reason, pct: pct(value) })),
+    })),
+    raw: Object.entries(counters.counters || {}).map(([name, entry]) => ({
+      name, unit: entry.unit, mean: entry.unit === 'events_per_cycle' ? entry.mean.toFixed(4) : `${(entry.mean * 100).toFixed(1)}%`,
+      max_core: entry.unit === 'events_per_cycle' ? entry.max_core.toFixed(4) : `${(entry.max_core * 100).toFixed(1)}%`,
+    })),
+    artifacts: counters.artifacts || [], errors: counters.errors || [],
+  };
+}
 
 // Device kernel time of one testcase: for every measured sample, first kernel start to last kernel end
 // over all cores and RISCs (tt-metal's DEVICE KERNEL DURATION definition), summed over the programs in
@@ -112,9 +182,19 @@ function displayProfile(report) {
   // Keep raw samples, telemetry and thousands of events in the download only.
   // The record page receives a bounded view model rather than the full report.
   const summary = deviceSummary(report);
+  const cases = report.cases || [];
+  const allCounters = cases.map((item) => countersView(item.counters)).filter(Boolean);
+  const meanOf = (key) => {
+    const values = allCounters.map((c) => c.units.find((u) => u.key === key)?.pct).filter((v) => Number.isFinite(v));
+    return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  };
   return { scheduler: report.scheduler, quality: report.quality,
     device_geomean_us: summary?.complete ? formatUs(summary.geomean_ns) : null,
-    cases: (report.cases || []).map((item) => {
+    device_complete: !!summary?.complete,
+    counters_available: allCounters.length > 0,
+    overall: { fpu_pct: meanOf('fpu_busy'), sfpu_pct: meanOf('sfpu_busy'), unpack_pct: Math.max(meanOf('unpacker0_busy') ?? 0, meanOf('unpacker1_busy') ?? 0), pack_pct: meanOf('packer_busy'),
+      cores_max: Math.max(0, ...cases.map((item) => new Set((item.device?.core_spans || []).map((span) => `${span.device_id}:${span.core_x},${span.core_y}`)).size)) },
+    cases: cases.map((item) => {
     const host = item.host || {}, device = item.device || {}, statistics = host.statistics || {};
     const expectedDeviceSamples = device.capture?.sample_count;
     const completeCoreGroups = (device.core_statistics || []).filter((group) =>
@@ -124,7 +204,9 @@ function displayProfile(report) {
       ? completeCoreGroups.reduce((slowest, group) => group.median_ns > slowest.median_ns ? group : slowest) : null;
     return {
       id: item.id,
+      status: item.status, status_name: ({ 1: 'AC', 2: 'WA', 3: 'TLE', 4: 'MLE', 5: 'OLE', 6: 'RE', 7: 'CE', 8: 'SE' })[item.status] || (item.status == null ? '—' : String(item.status)),
       correctness: host.correctness || null,
+      counters: countersView(item.counters),
       display_device_time_us: formatUs(deviceTimeNs(device)),
       device_summary: (() => {
         const ns = deviceTimeNs(device);
@@ -171,48 +253,55 @@ function displayProfile(report) {
   }) };
 }
 
+async function leaderboardFor(domainId, pdoc) {
+  const { record } = global.Hydro.model;
+  const reference = LEADERBOARD_PROBLEMS.get(pdoc.pid);
+  const referenceNs = reference && reference.length ? reference.map((us) => us * 1000) : null;
+  const referenceGeomean = referenceNs ? geometricMean(referenceNs) : null;
+  const accepted = await record.coll.find({ domainId, pid: pdoc.docId, status: 1 })
+    .project({ _id: 1, uid: 1, judgeAt: 1 }).toArray();
+  const counts = await record.coll.aggregate([
+    { $match: { domainId, pid: pdoc.docId } }, { $group: { _id: '$uid', count: { $sum: 1 } } },
+  ]).toArray();
+  const submissionsByUser = new Map(counts.map((item) => [item._id, item.count]));
+  const best = new Map();
+  for (const rdoc of accepted) {
+    const summary = cachedSummary(rdoc._id.toString());
+    if (!summary?.complete) continue;
+    const previous = best.get(rdoc.uid);
+    if (!previous || summary.geomean_ns < previous.geomean_ns) best.set(rdoc.uid, { ...summary, rid: rdoc._id.toString(), judgeAt: rdoc.judgeAt });
+  }
+  const rows = [...best.entries()].map(([uid, summary]) => ({
+    uid, rid: summary.rid, judgeAt: summary.judgeAt, geomean_ns: summary.geomean_ns,
+    display_geomean_us: formatUs(summary.geomean_ns),
+    speedup: referenceGeomean ? (referenceGeomean / summary.geomean_ns).toFixed(2) : '—',
+    submissions: submissionsByUser.get(uid) || 0,
+    cases: summary.times.map((ns, index) => ({
+      id: index + 1, display_us: formatUs(ns),
+      speedup: referenceNs && referenceNs[index] ? (referenceNs[index] / ns).toFixed(2) : '—',
+    })),
+  })).sort((a, b) => a.geomean_ns - b.geomean_ns);
+  rows.forEach((row, index) => { row.rank = index + 1; });
+  const used = await record.coll.countDocuments({ domainId, pid: pdoc.docId });
+  return {
+    pid: pdoc.pid, rows, used, limit: SUBMISSION_LIMITS.get(pdoc.pid) || null,
+    reference_geomean_ns: referenceGeomean, reference_geomean_us: formatUs(referenceGeomean),
+    reference_cases: referenceNs ? referenceNs.map(formatUs) : [],
+  };
+}
+
 class TTLeaderboardHandler extends Handler {
   async get({ domainId }) {
-    const { problem, record, user } = global.Hydro.model;
+    const { problem, user } = global.Hydro.model;
     const boards = [];
     const uids = new Set();
     for (const pid of [...LEADERBOARD_PROBLEMS.keys()].sort()) {
       const pdoc = await problem.get(domainId, pid);
       if (!pdoc) continue;
-      const reference = LEADERBOARD_PROBLEMS.get(pid);
-      const referenceNs = reference && reference.length ? reference.map((us) => us * 1000) : null;
-      const referenceGeomean = referenceNs ? geometricMean(referenceNs) : null;
-      const accepted = await record.coll.find({ domainId, pid: pdoc.docId, status: 1 })
-        .project({ _id: 1, uid: 1, judgeAt: 1 }).toArray();
-      const counts = await record.coll.aggregate([
-        { $match: { domainId, pid: pdoc.docId } }, { $group: { _id: '$uid', count: { $sum: 1 } } },
-      ]).toArray();
-      const submissionsByUser = new Map(counts.map((item) => [item._id, item.count]));
-      const best = new Map();
-      for (const rdoc of accepted) {
-        const summary = cachedSummary(rdoc._id.toString());
-        if (!summary?.complete) continue;
-        const previous = best.get(rdoc.uid);
-        if (!previous || summary.geomean_ns < previous.geomean_ns) best.set(rdoc.uid, { ...summary, rid: rdoc._id.toString(), judgeAt: rdoc.judgeAt });
-      }
-      const rows = [...best.entries()].map(([uid, summary]) => ({
-        uid, rid: summary.rid, judgeAt: summary.judgeAt, geomean_ns: summary.geomean_ns,
-        display_geomean_us: formatUs(summary.geomean_ns),
-        speedup: referenceGeomean ? (referenceGeomean / summary.geomean_ns).toFixed(2) : '—',
-        submissions: submissionsByUser.get(uid) || 0,
-        cases: summary.times.map((ns, index) => ({
-          id: index + 1, display_us: formatUs(ns),
-          speedup: referenceNs && referenceNs[index] ? (referenceNs[index] / ns).toFixed(2) : '—',
-        })),
-      })).sort((a, b) => a.geomean_ns - b.geomean_ns);
-      rows.forEach((row, index) => { row.rank = index + 1; uids.add(row.uid); });
-      const used = await record.coll.countDocuments({ domainId, pid: pdoc.docId });
-      boards.push({
-        pid, title: this.ttProblemTitle ? this.ttProblemTitle(pdoc) : pdoc.title, rows, used,
-        limit: SUBMISSION_LIMITS.get(pid) || null,
-        reference_geomean_us: formatUs(referenceGeomean),
-        reference_cases: referenceNs ? referenceNs.map(formatUs) : [],
-      });
+      const board = await leaderboardFor(domainId, pdoc);
+      board.title = this.ttProblemTitle ? this.ttProblemTitle(pdoc) : pdoc.title;
+      board.rows.forEach((row) => uids.add(row.uid));
+      boards.push(board);
     }
     this.response.template = 'tt_leaderboard.html';
     this.response.body = { boards, udict: await user.getList(domainId, [...uids]), updatedAt: new Date().toISOString() };
@@ -229,7 +318,7 @@ class TTProfileDownloadHandler extends RecordDetailHandler {
     await super.get(args.domainId, this.rdoc._id, false);
     if (typeof this.response.body?.rdoc?.status !== 'number') throw new ForbiddenError();
     const artifact = args.artifact || 'report.json';
-    if (artifact !== 'report.json' && !/^case-[1-9][0-9]*-device\.csv$/.test(artifact)) throw new NotFoundError();
+    if (artifact !== 'report.json' && !/^case-[1-9][0-9]*-(device|counters)\.csv$/.test(artifact)) throw new NotFoundError();
     const filename = path.join(PROFILE_ROOT, this.rdoc._id.toString(), artifact);
     if (!fs.existsSync(filename) || !fs.statSync(filename).isFile()) throw new NotFoundError();
     this.response.template = null;
@@ -277,6 +366,7 @@ exports.apply = function apply(ctx) {
       if (manifest.titles) titleTranslations.set(manifest.id, { title: manifest.title, titles: manifest.titles });
       if (Number.isInteger(manifest.submission_limit) && manifest.submission_limit > 0) SUBMISSION_LIMITS.set(manifest.id, manifest.submission_limit);
       if (manifest.language === 'ttlang') LEADERBOARD_PROBLEMS.set(manifest.id, Array.isArray(manifest.reference_device_us) ? manifest.reference_device_us : null);
+      PROBLEM_FOLDERS.set(manifest.id, path.join('/problems', entry.name));
     } catch (error) { if (error.code !== 'ENOENT') console.warn(error.message); }
   }
   const englishFor = (handler) => {
@@ -317,9 +407,11 @@ exports.apply = function apply(ctx) {
     const english = englishFor(handler);
     const localize = (pdoc) => {
       const translation = titleTranslations.get(pdoc?.pid);
-      return translation && pdoc.title === translation.title
-        ? { ...pdoc, title: translation.titles[english ? 'en' : 'zh'] || pdoc.title } : pdoc;
+      const title = translation && pdoc.title === translation.title ? (translation.titles.en || pdoc.title) : pdoc?.title;
+      return pdoc && typeof pdoc === 'object' ? { ...pdoc, title, content: englishContent(pdoc.content) } : pdoc;
     };
+    body.ttTheme = handler.user?.theme === 'dark' ? 'dark' : 'light';
+    body.ttLoggedIn = !!handler.user?.hasPriv?.(PRIV.PRIV_USER_PROFILE);
     if (body.pdoc) {
       const oldTitle = body.pdoc.title;
       body.pdoc = localize(body.pdoc);
@@ -330,8 +422,30 @@ exports.apply = function apply(ctx) {
         body.pdoc = { ...body.pdoc, content: quotaBanner(body.pdoc.content, used, limit) };
         body.ttSubmissionQuota = { used, limit, remaining: Math.max(0, limit - used) };
       }
+      if (handler.response.template === 'problem_detail.html' && handler.UiContext) {
+        const starter = starterFor(body.pdoc.pid);
+        const isTTLang = LEADERBOARD_PROBLEMS.has(body.pdoc.pid);
+        // LeetCode-style view: statement on the left, editor with the starter on the right, submissions below.
+        // problem_detail.html copies handler.user.codeTemplate/codeLang into UiContext for the editor.
+        if (isTTLang && handler.user) {
+          if (starter) handler.user.codeTemplate = starter;
+          handler.user.codeLang = 'ttlang';
+        }
+        handler.UiContext.ttWorkspace = { auto: isTTLang && body.ttLoggedIn, hasStarter: !!starter, lang: isTTLang ? 'ttlang' : null };
+      }
+    }
+    if (handler.response.template === 'record_detail.html' && body.rdoc && body.pdoc && LEADERBOARD_PROBLEMS.has(body.pdoc.pid)) {
+      try {
+        const board = await leaderboardFor(handler.args.domainId, body.pdoc);
+        const mine = board.rows.find((row) => row.uid === body.rdoc.uid);
+        const own = board.rows.find((row) => row.rid === String(body.rdoc._id));
+        body.ttRank = { total: board.rows.length, rank: own ? own.rank : null, best_rank: mine ? mine.rank : null,
+          speedup: own ? own.speedup : null, reference_geomean_us: board.reference_geomean_us,
+          used: board.used, limit: board.limit, is_best: !!own };
+      } catch (error) { console.warn('tt-site: rank lookup failed:', error.message); }
     }
     if (Array.isArray(body.pdocs)) body.pdocs = body.pdocs.map(localize);
+    if (body.pdoc && !handler.response.template?.startsWith('problem_detail')) body.pdoc = localize(body.pdoc);
     if (body.pdict) body.pdict = Object.fromEntries(Object.entries(body.pdict).map(([id, pdoc]) => [id, localize(pdoc)]));
     body.ttEnglish = english;
     body.overrideNav = global.Hydro.ui.getNodes('Nav').filter((item) =>

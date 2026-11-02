@@ -26,6 +26,7 @@ from docker.types import LogConfig, Ulimit
 from yarl import URL
 from metrics import numeric_block, quality_report, sha256, summarize_profile, telemetry_snapshot
 from device_profile import parse_device_profile
+from perf_counters import DEFAULT_MASK as COUNTER_MASK, parse_perf_counters, summarize_counters
 from protocol import Attempt, load_policy, recover_interrupted
 
 AC, WA, TLE, MLE, OLE, RE, CE, SE = range(1, 9)
@@ -69,7 +70,7 @@ def compare_numbers(actual, expected, atol=0, rtol=0):
 
 class Execution:
     """A container lifecycle that can be stopped on timeout/disconnect/shutdown."""
-    def __init__(self, client, container, profiling=False, attempt=None, case_id=None):
+    def __init__(self, client, container, profiling=False, attempt=None, case_id=None, pass_name=None):
         self.client = client
         self.container = container
         self.out = bytearray()
@@ -81,7 +82,7 @@ class Execution:
         self.profiling = profiling
         self.attempt = attempt
         self.case_id = case_id
-        self.pass_name = "device" if profiling else "host"
+        self.pass_name = pass_name or ("device" if profiling else "host")
         self.reader = threading.Thread(target=self._read, daemon=True)
 
     def _read(self):
@@ -271,7 +272,8 @@ class Judge:
     async def send(self, rid, key, **payload):
         await self.ws.send_json({"rid": rid, "key": key, **payload})
 
-    def prepare(self, folder, task, manifest, case, profiling=False):
+    def prepare(self, folder, task, manifest, case, profiling=False, counters=False):
+        pass_name = "counters" if counters else "device" if profiling else "host"
         folder.mkdir(parents=True, exist_ok=True)
         mode = manifest["mode"]
         source_name = "submission.py" if mode in PYTHON_MODES else "solution.cpp"
@@ -293,7 +295,8 @@ class Judge:
             "TT_OJ_BENCHMARK": "0" if profiling else "1",
             "TT_OJ_WARMUP": str(self.policy["host"]["warmup_count"]),
             "TT_OJ_SAMPLES": str(self.policy["host"]["sample_count"]),
-            "TT_OJ_PROFILE_ONLY": "1" if profiling else "0",
+            "TT_OJ_PROFILE_ONLY": "1" if profiling and not counters else "0",
+            "TT_OJ_COUNTERS_ONLY": "1" if counters else "0",
             "TT_OJ_DEVICE_PROFILER_SUPPORTED": "1" if DEVICE_PROFILER_SUPPORTED else "0",
             "TT_METAL_PROFILER_DIR": "/tmp/generated/profiler",
         }
@@ -302,6 +305,9 @@ class Judge:
             environment["TT_METAL_HOME"] = "/tmp"
         else:
             environment["TT_METAL_RUNTIME_ROOT"] = "/opt/tt-profiler/libexec/tt-metalium"
+        if counters:
+            # Tensix hardware counters (fpu, pack, unpack, instruction threads) read after each kernel.
+            environment["TT_METAL_PROFILE_PERF_COUNTERS"] = str(COUNTER_MASK)
         if profiling:
             environment["TT_METAL_DEVICE_PROFILER"] = "1"
             # NoC event tracing stays off: it logs every transfer (65 MB of CSV for one large multicore
@@ -333,13 +339,13 @@ class Judge:
         if self.attempt:
             try:
                 self.attempt.event("container_created", case_id=case_id,
-                                   pass_name="device" if profiling else "host", container_id=container.id,
+                                   pass_name=pass_name, container_id=container.id,
                                    runtime_image_id=image, cpu_affinity=BENCHMARK_CPUSET)
             except Exception:
                 with contextlib.suppress(docker.errors.NotFound, docker.errors.APIError):
                     container.remove(force=True)
                 raise
-        return Execution(self.docker, container, profiling=profiling, attempt=self.attempt, case_id=case_id)
+        return Execution(self.docker, container, profiling=profiling, attempt=self.attempt, case_id=case_id, pass_name=pass_name)
 
     async def wait_for_hardware(self, rid, timeout=120):
         """Exclude known external Docker TT workloads and excessive heat.
@@ -369,10 +375,9 @@ class Judge:
             await self.send(rid, "next", message="等待硬件空闲或降温 / Waiting for idle hardware or cooldown.")
             await asyncio.sleep(2)
 
-    async def prepare_execution(self, folder, task, manifest, case, profiling=False):
+    async def prepare_execution(self, folder, task, manifest, case, profiling=False, counters=False):
         # Cancellation must not abandon a still-running Docker create thread.
-        args = (folder, task, manifest, case, profiling) if profiling else (folder, task, manifest, case)
-        preparing = asyncio.create_task(asyncio.to_thread(self.prepare, *args))
+        preparing = asyncio.create_task(asyncio.to_thread(self.prepare, folder, task, manifest, case, profiling, counters))
         try:
             return await asyncio.shield(preparing)
         except asyncio.CancelledError:
@@ -628,6 +633,37 @@ class Judge:
                     attempt.event("pass_completed", case_id=index, pass_name="device", status=diagnostic["status"],
                                   comparison=profile_case["correctness"]["device_comparison"], capture_valid=device_profile.get("valid", False))
                 profile_case["device"] = device_profile
+                counters_profile = {"available": False, "reason": "skipped_non_accepted_case" if status != AC else "not_collected"}
+                if status == AC and DEVICE_PROFILER_SUPPORTED and mode == "ttlang":
+                    await self.send(rid, "next", message=f"Case {index}: reading hardware performance counters.")
+                    attempt.event("pass_prepare_started", case_id=index, pass_name="counters")
+                    self.active = await self.prepare_execution(attempt.private / f"{index}-counters", task, manifest, case, profiling=True, counters=True)
+                    try:
+                        diagnostic = await self.run_execution(self.active, timeout)
+                    finally:
+                        self.active = None
+                    filename = attempt.write_csv(index, diagnostic["profiler_csv"], kind="counters") if diagnostic.get("profiler_csv") else None
+                    if diagnostic["status"] is None and filename:
+                        capture_lines = [line[len(PROFILE_MARKER):] for line in diagnostic["stdout"].splitlines() if line.startswith(PROFILE_MARKER)]
+                        diagnostic_results = [line[len(MARKER):] for line in diagnostic["stdout"].splitlines() if line.startswith(MARKER)]
+                        try:
+                            metadata = json.loads(capture_lines[0]) if len(capture_lines) == 1 else {}
+                            correct = len(diagnostic_results) == 1 and (case["output"] is None or compare_numbers(
+                                json.loads(diagnostic_results[0]), json.loads(case["output"]), manifest.get("atol", 0), manifest.get("rtol", 0)))
+                            if not correct:
+                                raise ValueError("Counter pass result failed correctness validation")
+                            parsed = parse_perf_counters(diagnostic["profiler_csv"], COUNTER_MASK, capture=metadata.get("counter_capture"))
+                            counters_profile = {key: parsed.get(key) for key in ("available", "valid", "mask", "groups", "clock_mhz", "cores",
+                                                                                 "windows_decoded", "window_us_median", "counters", "errors", "notes")}
+                            counters_profile["summary"] = summarize_counters(parsed)
+                            counters_profile["capture"] = metadata.get("counter_capture")
+                        except (ValueError, TypeError, KeyError) as error:
+                            counters_profile = {"available": False, "valid": False, "reason": str(error)}
+                        counters_profile["artifacts"] = [filename]
+                    else:
+                        counters_profile = {"available": False, "valid": False, "reason": "counter_pass_failed_or_no_csv", "diagnostic_status": diagnostic["status"]}
+                    attempt.event("pass_completed", case_id=index, pass_name="counters", status=diagnostic["status"], counters_valid=counters_profile.get("valid", False))
+                profile_case["counters"] = counters_profile
                 host_recipe_matches = not host_profile.get("available") or (host_profile.get("warmup_count") == self.policy["host"]["warmup_count"] and host_profile.get("sample_count") == self.policy["host"]["sample_count"])
                 capture = device_profile.get("capture", {})
                 device_recipe_matches = not device_profile.get("available") or (capture.get("warmup") == self.policy["device"]["warmup_count"] and capture.get("sample_count") == self.policy["device"]["sample_count"])
