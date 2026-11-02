@@ -71,6 +71,28 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+  backup:
+    # Scheduled backups of MongoDB, ./data/profiles and the private job reports.
+    # See docs/backups.md; tools/backup.sh and tools/restore.sh wrap the manual operations.
+    image: mongo:7-jammy
+    cpuset: "${SERVICE_CPUSET:-0-3,8-11}"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 2m
+    environment:
+      BACKUP_RUN_ON_START: "${BACKUP_RUN_ON_START:-0}"
+      BACKUP_INTERVAL_HOURS: "${BACKUP_INTERVAL_HOURS:-24}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-14}"
+    command: ["bash", "/tools/backup-loop.sh"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./data/backups:/backups
+      - ./data/profiles:/profiles:ro
+      - ./data/jobs:/jobs:ro
+      - ./tools/backup-loop.sh:/tools/backup-loop.sh:ro
+      - ./tools/backup-once.sh:/tools/backup-once.sh:ro
 volumes:
   mongo-data:
   hydro-config:

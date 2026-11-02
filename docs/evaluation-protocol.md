@@ -103,10 +103,24 @@ has been established; the platform currently assumes trusted account holders.
 
 ## Scheduling and environment provenance
 
-The worker requests `concurrency: 1` from Hydro and holds a process-lifetime
-advisory `flock` for the whole mesh. Cases and diagnostic passes run sequentially.
-Tasks currently use device 0, while topology discovery receives device nodes
-0–3. This does not provide four independent device workers.
+The host has four Blackhole chips (`/dev/tenstorrent/0-3`, two p300 boards).
+The worker requests `concurrency: 4` from Hydro and keeps a chip pool: a
+TT-Lang job takes one free chip for its whole lifetime, so up to four
+submissions are judged at the same time, each on its own chip; the ttnn and
+Metalium runtimes discover the whole mesh and therefore take all four chips
+and run alone. Inside a TT-Lang container the reserved chip is mapped to
+`/dev/tenstorrent/0` and `TT_MESH_GRAPH_DESC_PATH` names the bundled one-chip
+(p150) mesh descriptor, because tt-metal treats a lone chip as a "CUSTOM"
+cluster and refuses to start without one. Within a job, cases and the three
+passes still run sequentially. The report's `scheduler.device_ids` records the
+chip; chips share the host CPU set and PCIe root, which can perturb host-side
+timings but not the on-device kernel cycles that are ranked. A process-lifetime
+advisory `flock` still prevents two workers from starting on one host.
+
+If the site process restarts while jobs are running, the Hydro task documents of
+those jobs are lost and the records stay "Judging"; rejudge them (record page,
+"Rejudge"). A worker restart or a dropped judge websocket is handled: Hydro
+re-queues the in-flight tasks and they are judged again from the start.
 
 Preflight excludes known external Docker containers exposing Tenstorrent devices
 and waits if a recorded Blackhole temperature reaches 85 °C, for at most 120 s.
@@ -128,7 +142,7 @@ capabilities and cannot access the Docker socket. The per-case bind mount has
 only the submitted source, current input and the required Python wrapper, with
 no expected outputs. Limits are 8 GiB host memory, no extra swap, 512 processes,
 2 GiB writable `/tmp`, combined stdout/stderr capture of 256 KiB, and device CSV
-capture of 16 MiB. Each pass's wall timeout includes all initialization, JIT and
+capture of 64 MiB. Each pass's wall timeout includes all initialization, JIT and
 transfers and is capped at 180 s.
 
 ## Attempt identity and lifecycle
@@ -205,6 +219,18 @@ stdout/stderr, compiler text and arbitrary infrastructure error messages. Full
 diagnostics stay in the restricted archive and normal judge permission flow.
 These profile downloads are not automatically a publicly licensed research
 dataset. Raw profiler CSVs may contain source paths or user zone metadata.
+
+On the site, a record's details are visible to its **owner or staff** only. A
+viewer is owner-or-staff when `user._id === rdoc.uid` or the account holds
+`PRIV_READ_RECORD_CODE` (the super admin and the instructor account). For
+everyone else the record page (`/record/:rid`, including the websocket
+re-render of the status block) shows only the overall verdict, the verdict and
+device time per testcase, the device-time geometric mean and the leaderboard
+rank; judge messages, compiler text, the judge log, hardware counters, timing
+details and the source code are hidden, and `/record/:rid/profile` and
+`/record/:rid/profile/:artifact` answer 403. The leaderboard itself is public
+to logged-in accounts, so rank, speedup and per-testcase device times are not
+considered private.
 
 The finalized inventory lists exact private/public file paths, SHA-256 and byte
 sizes. It excludes itself to avoid a self-hash cycle. It does not inventory

@@ -2,7 +2,8 @@
 
 The broker has Docker access. Submitted programs never receive the socket,
 credentials, expected outputs, host home directory, or a network connection.
-The hardware is reserved serially: the TT runtime discovers the entire mesh.
+TT-Lang jobs each take one Blackhole chip, so up to four run in parallel; the
+ttnn/Metalium runtimes discover the whole mesh and take every chip.
 """
 import asyncio
 import contextlib
@@ -53,6 +54,31 @@ BENCHMARK_CPUSET = os.environ.get("BENCHMARK_CPUSET", "4-7,12-15")
 DEVICE_PROFILER_SUPPORTED = os.environ.get("TT_OJ_DEVICE_PROFILER_SUPPORTED") == "1"
 DEVICE_CSV_PATH = "/tmp/generated/profiler/.logs/profile_log_device.csv"
 DEVICE_ARTIFACT_LIMIT = 64 * 1024 * 1024  # a 110-core TT-Lang kernel writes ~7 MB per case
+CHIP_COUNT = int(os.environ.get("TT_OJ_CHIP_COUNT", "4"))
+WORKER_CONCURRENCY = max(1, min(CHIP_COUNT, int(os.environ.get("TT_OJ_CONCURRENCY", str(CHIP_COUNT)))))
+# A container that sees a single chip is a "CUSTOM" cluster for tt-metal, which then requires an
+# explicit mesh graph descriptor; the wheel bundles this one-chip Blackhole (p150) descriptor.
+TTLANG_MESH_DESCRIPTOR = ("/opt/venv/lib/python3.12/site-packages/ttnn/tt_metal/fabric/"
+                          "mesh_graph_descriptors/p150_mesh_graph_descriptor.textproto")
+
+
+class ChipPool:
+    """Hands out exclusive Tenstorrent chips to concurrent jobs."""
+    def __init__(self, count):
+        self.free = set(range(count))
+        self.condition = asyncio.Condition()
+
+    async def acquire(self, count):
+        async with self.condition:
+            await self.condition.wait_for(lambda: len(self.free) >= count)
+            chips = sorted(self.free)[:count]
+            self.free.difference_update(chips)
+            return chips
+
+    async def release(self, chips):
+        async with self.condition:
+            self.free.update(chips)
+            self.condition.notify_all()
 
 
 def compare_numbers(actual, expected, atol=0, rtol=0):
@@ -220,10 +246,10 @@ class Judge:
         self.docker = docker.from_env()
         self.http = None
         self.ws = None
-        self.active = None
-        self.judging = None
+        self.jobs = {}
+        self.chips = ChipPool(CHIP_COUNT)
+        self.send_lock = asyncio.Lock()
         self.shutting_down = False
-        self.attempt = None
         _, self.policy = load_policy()
         JOBS.mkdir(parents=True, exist_ok=True)
         PROFILES.mkdir(parents=True, exist_ok=True)
@@ -270,9 +296,19 @@ class Judge:
         return json.loads(raw), raw
 
     async def send(self, rid, key, **payload):
-        await self.ws.send_json({"rid": rid, "key": key, **payload})
+        async with self.send_lock:  # several jobs share one judge websocket
+            await self.ws.send_json({"rid": rid, "key": key, **payload})
 
-    def prepare(self, folder, task, manifest, case, profiling=False, counters=False):
+    async def cancel_jobs(self):
+        jobs = [job for job in self.jobs.values() if not job.done()]
+        for job in jobs:
+            job.cancel()
+        for job in jobs:
+            with contextlib.suppress(asyncio.CancelledError):
+                await job
+        self.jobs = {}
+
+    def prepare(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None, chips=None):
         pass_name = "counters" if counters else "device" if profiling else "host"
         folder.mkdir(parents=True, exist_ok=True)
         mode = manifest["mode"]
@@ -282,9 +318,14 @@ class Judge:
         if mode in PYTHON_MODES:
             (folder / "runner.py").write_bytes(Path(f"/app/{mode}_runner.py").read_bytes())
         host_folder = HOST_JOBS / folder.relative_to(JOBS)
-        # Pass all mesh device nodes required by topology discovery. Serial lock
-        # protects the complete mesh; programs use device 0 in the initial tasks.
-        devices = [f"/dev/tenstorrent/{i}:/dev/tenstorrent/{i}:rwm" for i in range(4)]
+        chips = list(chips if chips is not None else range(CHIP_COUNT))
+        single_chip = mode == "ttlang" and len(chips) == 1
+        if single_chip:
+            # The reserved chip is mapped to node 0, so the wrapper's device_id=0 opens exactly that chip.
+            devices = [f"/dev/tenstorrent/{chips[0]}:/dev/tenstorrent/0:rwm"]
+        else:
+            # The ttnn/Metalium runtimes discover the whole mesh; they hold every chip while they run.
+            devices = [f"/dev/tenstorrent/{i}:/dev/tenstorrent/{i}:rwm" for i in chips]
         executable = "/opt/venv/bin/python3 /workspace/runner.py" if mode in PYTHON_MODES else (
             "/opt/tt-oj/bin/judge-riscv" if mode == "metalium-riscv" else "/opt/tt-oj/bin/judge-compute"
         )
@@ -303,6 +344,8 @@ class Judge:
         if mode == "ttlang":
             # The TT-Lang wheel bundles its own runtime; its perf tools look under $TT_METAL_HOME/generated/profiler.
             environment["TT_METAL_HOME"] = "/tmp"
+            if single_chip:
+                environment["TT_MESH_GRAPH_DESC_PATH"] = TTLANG_MESH_DESCRIPTOR
         else:
             environment["TT_METAL_RUNTIME_ROOT"] = "/opt/tt-profiler/libexec/tt-metalium"
         if counters:
@@ -333,19 +376,19 @@ class Judge:
             ulimits=[Ulimit(name="nofile", soft=4096, hard=4096)],
             log_config=LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"}),
             labels={"tt-oj.worker": "local", "tt-oj.record": task["rid"],
-                    "tt-oj.attempt": self.attempt.id if self.attempt else "unknown"},
+                    "tt-oj.attempt": attempt.id if attempt else "unknown"},
         )
         case_id = int(folder.name.split("-")[0])
-        if self.attempt:
+        if attempt:
             try:
-                self.attempt.event("container_created", case_id=case_id,
-                                   pass_name=pass_name, container_id=container.id,
-                                   runtime_image_id=image, cpu_affinity=BENCHMARK_CPUSET)
+                attempt.event("container_created", case_id=case_id,
+                              pass_name=pass_name, container_id=container.id, chips=chips,
+                              runtime_image_id=image, cpu_affinity=BENCHMARK_CPUSET)
             except Exception:
                 with contextlib.suppress(docker.errors.NotFound, docker.errors.APIError):
                     container.remove(force=True)
                 raise
-        return Execution(self.docker, container, profiling=profiling, attempt=self.attempt, case_id=case_id, pass_name=pass_name)
+        return Execution(self.docker, container, profiling=profiling, attempt=attempt, case_id=case_id, pass_name=pass_name)
 
     async def wait_for_hardware(self, rid, timeout=120):
         """Exclude known external Docker TT workloads and excessive heat.
@@ -375,9 +418,9 @@ class Judge:
             await self.send(rid, "next", message="等待硬件空闲或降温 / Waiting for idle hardware or cooldown.")
             await asyncio.sleep(2)
 
-    async def prepare_execution(self, folder, task, manifest, case, profiling=False, counters=False):
+    async def prepare_execution(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None, chips=None):
         # Cancellation must not abandon a still-running Docker create thread.
-        preparing = asyncio.create_task(asyncio.to_thread(self.prepare, folder, task, manifest, case, profiling, counters))
+        preparing = asyncio.create_task(asyncio.to_thread(self.prepare, folder, task, manifest, case, profiling, counters, attempt, chips))
         try:
             return await asyncio.shield(preparing)
         except asyncio.CancelledError:
@@ -417,6 +460,8 @@ class Judge:
         task = dict(task)
         task["rid"] = rid = rid.lower()
         attempt = None
+        active = None
+        chips = None
         log.info("Judging record=%s language=%s problem=%s", rid, task.get("lang"), task.get("pid"))
 
         async def end(status, reason, **payload):
@@ -434,10 +479,10 @@ class Judge:
             await self.send(rid, "end", **final)
 
         try:
-            attempt = self.attempt = Attempt(JOBS, PROFILES, task)
+            attempt = Attempt(JOBS, PROFILES, task)
             report = attempt.report
-            report["scheduler"] = {"concurrency": 1, "reservation": "whole_mesh", "device_ids": [0],
-                "discovered_devices": [0, 1, 2, 3], "cpu_affinity": BENCHMARK_CPUSET,
+            report["scheduler"] = {"concurrency": WORKER_CONCURRENCY, "reservation": None, "device_ids": None,
+                "discovered_devices": list(range(CHIP_COUNT)), "cpu_affinity": BENCHMARK_CPUSET,
                 "cpu_quota": None, "queue_priority": task.get("priority"),
                 "queue_policy": "Hydro priority queue", "external_contention_verified": False}
             code_paths = [Path(__file__), Path(__file__).with_name("metrics.py"), Path(__file__).with_name("device_profile.py"),
@@ -458,7 +503,7 @@ class Judge:
                 ("device_parser_sha256", Path(__file__).with_name("device_profile.py")),
                 ("protocol_sha256", Path(__file__).with_name("protocol.py")))})
             attempt.checkpoint()
-            await self.send(rid, "next", status=21, message="Preparing Tenstorrent containers; whole-machine serial evaluation.")
+            await self.send(rid, "next", status=21, message="Preparing Tenstorrent containers.")
             attempt.event("manifest_fetch_started")
             manifest, manifest_raw = await self.manifest(task)
             attempt.set_manifest(manifest_raw, manifest)
@@ -495,6 +540,12 @@ class Judge:
             attempt.event("hardware_preflight_started")
             report["scheduler"]["preflight"] = await self.wait_for_hardware(rid)
             attempt.event("hardware_preflight_passed", **report["scheduler"]["preflight"])
+            needed = 1 if mode == "ttlang" else CHIP_COUNT
+            if len(self.chips.free) < needed:
+                await self.send(rid, "next", message="Waiting for a free Tenstorrent chip.")
+            chips = await self.chips.acquire(needed)
+            report["scheduler"].update({"reservation": "single_chip" if needed == 1 else "whole_mesh", "device_ids": chips})
+            attempt.event("chips_acquired", chips=chips)
             cases = manifest["tests"]
             time_ms = manifest.get("time_ms", 120000)
             if isinstance(time_ms, bool) or not isinstance(time_ms, (int, float)) or not math.isfinite(time_ms):
@@ -528,11 +579,11 @@ class Judge:
                 await self.send(rid, "next", status=20, progress=round((index - 1) * 100 / len(cases)))
                 folder = attempt.private / str(index)
                 attempt.event("pass_prepare_started", case_id=index, pass_name="host")
-                self.active = await self.prepare_execution(folder, task, manifest, case)
+                active = await self.prepare_execution(folder, task, manifest, case, attempt=attempt, chips=chips)
                 try:
-                    outcome = await self.run_execution(self.active, timeout)
+                    outcome = await self.run_execution(active, timeout)
                 finally:
-                    self.active = None
+                    active = None
                 status, message = outcome["status"], ""
                 full_log = outcome["stderr"] + "\n" + outcome["stdout"]
                 compile_failure = (mode == "ttlang" and re.search(r"TTLangCompileError|^error: ", full_log, re.M)) or (
@@ -593,11 +644,11 @@ class Judge:
                 if status == AC and DEVICE_PROFILER_SUPPORTED:
                     await self.send(rid, "next", message=f"Case {index}: collecting a separate device profiler pass.")
                     attempt.event("pass_prepare_started", case_id=index, pass_name="device")
-                    self.active = await self.prepare_execution(attempt.private / f"{index}-device", task, manifest, case, profiling=True)
+                    active = await self.prepare_execution(attempt.private / f"{index}-device", task, manifest, case, profiling=True, attempt=attempt, chips=chips)
                     try:
-                        diagnostic = await self.run_execution(self.active, timeout)
+                        diagnostic = await self.run_execution(active, timeout)
                     finally:
-                        self.active = None
+                        active = None
                     if diagnostic.get("profiler_csv"):
                         # Preserve a collected CSV even when the diagnostic
                         # program later fails; never reinterpret it as valid.
@@ -637,11 +688,11 @@ class Judge:
                 if status == AC and DEVICE_PROFILER_SUPPORTED and mode == "ttlang":
                     await self.send(rid, "next", message=f"Case {index}: reading hardware performance counters.")
                     attempt.event("pass_prepare_started", case_id=index, pass_name="counters")
-                    self.active = await self.prepare_execution(attempt.private / f"{index}-counters", task, manifest, case, profiling=True, counters=True)
+                    active = await self.prepare_execution(attempt.private / f"{index}-counters", task, manifest, case, profiling=True, counters=True, attempt=attempt, chips=chips)
                     try:
-                        diagnostic = await self.run_execution(self.active, timeout)
+                        diagnostic = await self.run_execution(active, timeout)
                     finally:
-                        self.active = None
+                        active = None
                     filename = attempt.write_csv(index, diagnostic["profiler_csv"], kind="counters") if diagnostic.get("profiler_csv") else None
                     if diagnostic["status"] is None and filename:
                         capture_lines = [line[len(PROFILE_MARKER):] for line in diagnostic["stdout"].splitlines() if line.startswith(PROFILE_MARKER)]
@@ -691,10 +742,10 @@ class Judge:
             await end(final_status, "evaluation_completed", **final)
             log.info("Finished record=%s attempt=%s status=%s score=%s", rid, attempt.id, final_status, round(score, 2))
         except asyncio.CancelledError:
-            if self.active:
-                await asyncio.to_thread(self.active.stop)
-                await asyncio.to_thread(self.active.remove)
-                self.active = None
+            if active:
+                await asyncio.to_thread(active.stop)
+                await asyncio.to_thread(active.remove)
+                active = None
             if attempt and not attempt.finalized:
                 for case in attempt.report["cases"]:
                     if case.get("state") == "running":
@@ -704,10 +755,10 @@ class Judge:
             raise
         except Exception as error:
             log.exception("Judge error for %s", rid)
-            if self.active:
-                await asyncio.to_thread(self.active.stop)
-                await asyncio.to_thread(self.active.remove)
-                self.active = None
+            if active:
+                await asyncio.to_thread(active.stop)
+                await asyncio.to_thread(active.remove)
+                active = None
             if attempt and not attempt.finalized:
                 for case in attempt.report["cases"]:
                     if case.get("state") == "running":
@@ -718,7 +769,8 @@ class Judge:
                 with contextlib.suppress(Exception):
                     await self.send(rid, "end", status=SE, score=0, message=f"Judge archive initialization failed: {error}")
         finally:
-            self.attempt = None
+            if chips is not None:
+                await self.chips.release(chips)
 
     async def connection(self):
         async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True), headers={"Accept": "application/json"},
@@ -728,9 +780,9 @@ class Judge:
             ws_url = BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + "judge/conn"
             async with session.ws_connect(ws_url, headers={"Authorization": f"Bearer {sid}"}, max_msg_size=16 * 1024 * 1024) as ws:
                 self.ws = ws
-                await ws.send_json({"key": "config", "lang": list(LANGS), "concurrency": 1, "type": ["judge"]})
+                await ws.send_json({"key": "config", "lang": list(LANGS), "concurrency": WORKER_CONCURRENCY, "type": ["judge"]})
                 await ws.send_json({"key": "start"})
-                log.info("Connected to Hydro; serial hardware worker ready")
+                log.info("Connected to Hydro; %s chips, concurrency %s", CHIP_COUNT, WORKER_CONCURRENCY)
                 (JOBS / "worker-status.json").write_text(json.dumps({"connected": True, "host": socket.gethostname(), "languages": LANGS}))
                 async for message in ws:
                     if message.type == aiohttp.WSMsgType.TEXT:
@@ -739,32 +791,25 @@ class Judge:
                             continue
                         request = json.loads(message.data)
                         if request.get("task"):
-                            if self.judging and not self.judging.done():
-                                raise RuntimeError("Server sent simultaneous hardware tasks despite concurrency=1")
-                            self.judging = asyncio.create_task(self.judge(request["task"]))
+                            self.jobs = {key: job for key, job in self.jobs.items() if not job.done()}
+                            if len(self.jobs) >= WORKER_CONCURRENCY:
+                                raise RuntimeError(f"Server sent more than {WORKER_CONCURRENCY} simultaneous tasks")
+                            key = f"{request['task'].get('rid')}:{uuid.uuid4().hex[:8]}"
+                            self.jobs[key] = asyncio.create_task(self.judge(request["task"]))
                     elif message.type == aiohttp.WSMsgType.ERROR:
                         raise RuntimeError(f"Judge websocket error: {ws.exception()}")
-            if self.judging and not self.judging.done():
-                self.judging.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self.judging
+            await self.cancel_jobs()
 
     async def run(self):
         while not self.shutting_down:
             try:
                 await self.connection()
             except asyncio.CancelledError:
-                if self.judging and not self.judging.done():
-                    self.judging.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await self.judging
+                await self.cancel_jobs()
                 raise
             except Exception:
                 log.exception("Hydro connection failed; reconnecting")
-                if self.judging and not self.judging.done():
-                    self.judging.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await self.judging
+                await self.cancel_jobs()
             (JOBS / "worker-status.json").write_text(json.dumps({"connected": False}))
             await asyncio.sleep(5)
 
