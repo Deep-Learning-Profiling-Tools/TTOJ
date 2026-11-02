@@ -110,7 +110,13 @@
     html.classList.add('theme--' + theme);
     html.setAttribute('data-mantine-color-scheme', theme);
     if (toggle) { toggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode'; toggle.setAttribute('data-theme', theme); }
-    try { localStorage.setItem('tt-theme', theme); } catch (e) { /* storage blocked */ }
+    try {
+      localStorage.setItem('tt-theme', theme);
+      // The Monaco editor in the workspace reads its options from editor.config.
+      var config = JSON.parse(localStorage.getItem('editor.config') || '{}');
+      config.theme = theme === 'dark' ? 'vs-dark' : 'vs-light';
+      localStorage.setItem('editor.config', JSON.stringify(config));
+    } catch (e) { /* storage blocked */ }
   }
   if (toggle) {
     var loggedIn = toggle.getAttribute('data-logged-in') === 'yes';
@@ -118,6 +124,8 @@
       var saved = null;
       try { saved = localStorage.getItem('tt-theme'); } catch (e) { /* storage blocked */ }
       if (saved === 'dark' || saved === 'light') apply(saved);
+    } else {
+      apply(html.classList.contains('theme--dark') ? 'dark' : 'light');
     }
     toggle.addEventListener('click', function () {
       var next = html.classList.contains('theme--dark') ? 'light' : 'dark';
