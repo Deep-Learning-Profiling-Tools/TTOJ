@@ -85,7 +85,7 @@ For the lab report, quote the device time as the result and use the counters as 
 
 ## Leaderboard and speedup
 
-`/leaderboard` has one table per problem. Each account appears once with its fastest accepted submission, ranked by **device time**: per testcase, the time from the first kernel start to the last kernel end over all cores, median of 7 instrumented samples; then the geometric mean over the 10 testcases. Host times and wall times are never ranked. *Speedup* is the single-core reference geometric mean divided by yours (about 22.1 µs for TT3001, 68.5 µs for TT3002 and 1100 µs for TT3003); "per testcase" expands the per-case times and speedups. The page does not refresh by itself; use the **Refresh now** link. A submission appears only when every testcase is accepted and has device timing.
+`/leaderboard` has one table per problem. Instructor and test accounts are not ranked. Each account appears once with its fastest accepted submission, ranked by **device time**: per testcase, the time from the first kernel start to the last kernel end over all cores, median of 7 instrumented samples; then the geometric mean over the 10 testcases. Host times and wall times are never ranked. *Speedup* is the single-core reference geometric mean divided by yours (about 22.1 µs for TT3001, 68.5 µs for TT3002 and 1100 µs for TT3003); "per testcase" expands the per-case times and speedups. The page does not refresh by itself; use the **Refresh now** link. A submission appears only when every testcase is accepted and has device timing.
 
 ## The submission limit and tips
 

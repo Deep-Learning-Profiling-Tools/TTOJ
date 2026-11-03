@@ -5,6 +5,8 @@ const { RecordDetailHandler } = require(path.join(path.dirname(require.resolve('
 const PROFILE_ROOT = '/data/tt-profiles';
 // Per-problem submission caps, applied to each account separately (pretests included), from /problems/*/metadata.json.
 const SUBMISSION_LIMITS = new Map();
+// Accounts left off the leaderboard besides staff, e.g. test accounts (usernames, comma separated).
+const UNRANKED_USERS = new Set((process.env.TT_OJ_UNRANKED_USERS || '').split(',').map((name) => name.trim()).filter(Boolean));
 // Leaderboard problems (language ttlang) and their reference solution's per-case device time in µs.
 const LEADERBOARD_PROBLEMS = new Map();
 // Problem id -> folder under /problems (for the starter code shown in the editor).
@@ -299,6 +301,12 @@ async function leaderboardFor(domainId, pdoc, uid = null) {
     if (!summary?.complete) continue;
     const previous = best.get(rdoc.uid);
     if (!previous || summary.geomean_ns < previous.geomean_ns) best.set(rdoc.uid, { ...summary, rid: rdoc._id.toString(), judgeAt: rdoc.judgeAt });
+  }
+  // Staff (instructor/admin accounts) and test accounts listed in TT_OJ_UNRANKED_USERS are not ranked.
+  const accounts = await global.Hydro.model.user.getList(domainId, [...best.keys()]);
+  for (const id of [...best.keys()]) {
+    const account = accounts[id];
+    if (account && (account.hasPriv(PRIV.PRIV_READ_RECORD_CODE) || UNRANKED_USERS.has(account.uname))) best.delete(id);
   }
   const rows = [...best.entries()].map(([uid, summary]) => ({
     uid, rid: summary.rid, judgeAt: summary.judgeAt, geomean_ns: summary.geomean_ns,
