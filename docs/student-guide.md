@@ -31,9 +31,9 @@ The ragged problems do not pass `lengths`. They pass `valid`, an FP32 tensor wit
 
 Correctness is `|got - want| <= atol + rtol * scale` per element: `atol = 1e-6, rtol = 2^-8` for TT3001 (scale `|a| + |b|`) and TT3002 (scale: sum of `|x|` over the valid prefix), and `atol = 1e-4, rtol = 2^-6` for TT3003 (scale: the reference value). The tolerance is wider than FP32 epsilon because the FPU rounds operands to about 11 significant bits. Each problem has 10 testcases generated from a fixed seed; the statement lists their shapes.
 
-**What the problem page shows.** The statement is on the left. On the right is a code editor preloaded with the starter code (also attached as `starter.py` under the **Files** tab), with the language preset to "Tenstorrent TT-Lang (Python)". Your previous submissions to this problem are listed below the editor. If the split view does not open, click **Open Scratchpad (Alt+E)**. The classic **Submit** page (`/p/TT3001/submit`) also works: paste the code or upload a file.
+**What the problem page shows.** The statement is on the left. On the right is a code editor preloaded with a template that has the required signature and an empty body (also attached as `starter.py` under the **Files** tab), with the language preset to "Tenstorrent TT-Lang (Python)". Your previous submissions to this problem are listed below the editor. If the split view does not open, click **Open Scratchpad (Alt+E)**. The classic **Submit** page (`/p/TT3001/submit`) also works: paste the code or upload a file.
 
-The starters are single-core baselines. The TT3001 and TT3003 starters are correct but slow. The TT3002 starter asserts `W_pad <= 256` and fails the wide testcases until you add chunking.
+The template only fixes the interface: you write the dataflow buffers and the reader, compute and writer kernels yourself, starting from the TT-Lang chapter and the matmul example of the course notes.
 
 ## Submitting and the statuses
 
