@@ -10,6 +10,7 @@
     <li class="nav__list-item"><a class="nav__item" href="javascript:;" id="tt-theme-toggle" data-theme="{{ ttTheme|default('light') }}" data-logged-in="{{ 'yes' if ttLoggedIn else 'no' }}" title="Switch between light and dark mode">{{ 'Light mode' if ttTheme == 'dark' else 'Dark mode' }}</a></li>
     {% if handler.user.hasPriv(PRIV.PRIV_USER_PROFILE) %}
       <li class="nav__list-item"><a class="nav__item" href="{{ url('home_settings', category='preference') }}">{{ handler.user.uname }}</a></li>
+      <li class="nav__list-item"><a class="nav__item{% if page_name == 'home_security' %} nav--active{% endif %}" href="{{ url('home_security') }}" name="nav_security">{{ _('Change password') }}</a></li>
       <li class="nav__list-item"><a class="nav__item" href="{{ url('user_logout') }}" name="nav_logout">{{ _('Logout') }}</a></li>
     {% else %}
       <li class="nav__list-item"><a class="nav__item" href="{{ url('user_login') }}" name="nav_login">{{ _('Login') }}</a></li>

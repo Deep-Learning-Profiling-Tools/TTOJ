@@ -198,7 +198,10 @@ After logging in as the configured administrator:
 - `/manage/userpriv`: manage account privileges.
 - `/problem/create`: create problems; existing problem pages expose editing,
   test-data configuration, and file management.
-- `/home/security`: change your own password.
+- `/home/security` (**Change password** in the top bar, for every account): change
+  your own password. Accounts created with `tools/import-accounts.js` see a notice on
+  every page until they replace the initial password; see
+  `docs/cs540-ttlang-deployment.md`, section 5.
 
 Some sensitive operations require confirming the current administrator password.
 The System navigation entry is only shown to accounts with system-management

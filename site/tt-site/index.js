@@ -429,6 +429,14 @@ exports.apply = function apply(ctx) {
   ctx.Route('tt_leaderboard', '/leaderboard', TTLeaderboardHandler, PRIV.PRIV_USER_PROFILE);
   global.Hydro.ui.inject('Nav', 'tt_leaderboard', { prefix: 'tt_leaderboard', before: 'record_main' }, PRIV.PRIV_USER_PROFILE);
   ctx.Route('tt_profile_json', '/record/:rid/profile', TTProfileDownloadHandler);
+  // tools/import-accounts.js stores the salt of each account's roster password in ttInitialSalt. Hydro draws a
+  // new salt whenever a password is set (by the student at /home/security or by an administrator), so equal
+  // salts mean the account still uses the password the instructor handed out; every page then shows a notice.
+  const usesInitialPassword = (handler) => {
+    const account = handler.user;
+    return !!(account?._udoc?.ttInitialSalt && account._udoc.ttInitialSalt === account._salt);
+  };
+  global.Hydro.ui.inject('Notification', 'tt_initial_password_notice', { type: 'warn' }, PRIV.PRIV_USER_PROFILE, usesInitialPassword);
   ctx.Route('tt_profile_artifact', '/record/:rid/profile/:artifact', TTProfileDownloadHandler);
   ctx.on('handler/after', async (handler) => {
     if (!handler.response.body || typeof handler.response.body !== 'object') return;

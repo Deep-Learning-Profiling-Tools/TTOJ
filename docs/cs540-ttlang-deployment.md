@@ -113,7 +113,22 @@ It prints `username -> uid` for created accounts, skips usernames that already
 exist (their passwords are not reset) and lists failures. The CS540 roster
 (16 accounts, GMU NetID as username, `netid@gmu.edu` as e-mail, the student's
 G number as the initial password) was imported this way on 2026-11-03; students
-change the password at `/home/security`. Single accounts can also be made at
+change the password themselves through **Change password** in the top bar
+(`/home/security`, behind Hydro's "Confirm Access" step).
+
+The import stores the salt of each account's roster password as `ttInitialSalt`.
+Hydro draws a new salt whenever a password is set, so while the two are equal the
+account still uses the handed-out password and every page shows it a red notice
+with a link to the change form. Re-running the import on the same roster creates
+nobody and marks existing accounts whose password still equals the roster
+password (this marked the 16 CS540 accounts on 2026-11-03). To reset a forgotten
+password and show the notice again until the student changes it:
+
+```bash
+docker exec $S sh -c 'cd /opt/hydro && hydrooj cli execute "const u=global.Hydro.model.user; const x=await u.getByUname(\"system\", \"NETID\"); await u.setPassword(x._id, \"TEMP-PASSWORD\"); await u.setById(x._id, {ttInitialSalt: (await u.getById(\"system\", x._id))._salt})"'
+```
+
+Single accounts can also be made at
 `/manage/userimport` or with
 `hydrooj cli execute "await global.Hydro.model.user.create('email', 'uname', 'password')"`.
 Hand out [`docs/student-guide.md`](student-guide.md). Daily database and report

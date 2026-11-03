@@ -6,7 +6,14 @@ The course's online judge (OJ) compiles your TT-Lang operation, runs it on one T
 
 The OJ address is http://98.93.3.136:28888/ (plain HTTP, no `https`). It is served over plain HTTP from a university-hosted machine, so your password travels unencrypted: use a password that you do not use anywhere else.
 
-Accounts are created by the instructor; there is no self-registration. Log in at `/login` with the username and password you were given. After the first login, change the password at `/home/security` (also under your username in the menu). The site first asks you to confirm your current password ("Confirm Access"), then shows the change-password form.
+Accounts are created by the instructor; there is no self-registration. Your username is your GMU NetID and your initial password is your G number, capital G included. Log in at `/login`, then change the password right away:
+
+1. Click **Change password** in the top bar (or open `/home/security`).
+2. On the "Confirm Access" page, enter your current password.
+3. Fill in the current password and the new one twice under "Change Password" and submit.
+4. The site logs you out. Log in again with the new password.
+
+Until you change it, every page shows a red notice that your account still uses its initial password. If you forget your new password, ask the instructor to reset it.
 
 The navigation bar has **Accelerator problems** (the problem list), **Leaderboard**, **Submissions** (all records, filterable by problem, user and status), **Profiling** (how the measurements are made) and a light/dark toggle.
 
