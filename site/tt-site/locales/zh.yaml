@@ -33,7 +33,6 @@
   "Use circular buffers and the Tensix compute pipeline.": "使用 circular buffer 与 Tensix 计算流水线。",
   "What the measurements mean": "这些测量值代表什么",
   "Correctness scores and performance measurements are reported separately. Container wall time includes initialization, JIT, transfers, and execution. Repeated host timings and device profiler events have their own scopes.": "正确性得分与性能测量分别报告。容器墙钟时间包含初始化、JIT、传输与执行；重复主机计时和设备 profiler 事件各自有明确的测量范围。",
-  "Hardware jobs run serially. This private experimental judge expects trusted submissions; TTNN Python results are not proof of hardware execution.": "硬件任务串行运行。本实验平台面向可信提交；TTNN Python 返回的结果不构成硬件执行证明。",
   "Profiling explains where time is spent. A correctness score alone does not measure kernel speed.": "性能剖析用于解释时间花在哪里。正确性得分本身不能衡量 kernel 的速度。",
   "Measurement": "测量项",
   "Scope": "测量范围",

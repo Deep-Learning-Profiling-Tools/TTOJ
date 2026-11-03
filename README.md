@@ -79,8 +79,8 @@ busy fractions, per-thread stalls and stall reasons; `worker/perf_counters.py`).
 `/leaderboard` ranks each account's fastest accepted submission by the geometric
 mean of device time over the testcases. The site is English only, has a
 light/dark toggle in the navigation, and opens TT-Lang problems in a split
-workspace (statement left, editor with the starter code right, submissions
-below). To try a solution
+workspace (statement left, editor with a signature-only template right,
+submissions below). To try a solution
 without Hydro or Docker: `python3 tools/ttlang_local_judge.py --problem
 ttlang-vector-add --solution problems/ttlang-vector-add/accepted.py`.
 For C++, submit the device kernel, not a host `main()`. The trusted host harness

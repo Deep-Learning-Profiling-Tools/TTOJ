@@ -571,7 +571,7 @@ class Judge:
         its start marker ends the container with TLE; the CSVs of finished cases are kept.
         """
         ids = [item["id"] for item in items]
-        recipe = self.policy["counters" if pass_name == "counters" else "device"]
+        recipe = self.policy["counters" if pass_name == "counters" else "ttlang"]
         batch = {"pass": pass_name, "warmup": recipe["warmup_count"], "samples": recipe["sample_count"], "cases": items}
         attempt.event("pass_prepare_started", case_id=0, pass_name=pass_name, case_ids=ids)
         execution = await self.prepare_execution(attempt.private / f"0-{pass_name}", task, manifest,
@@ -730,7 +730,7 @@ class Judge:
                       "time": wall_ms, "memory": outcome["memory"], "message": message}
             if host_profile.get("available"):
                 result["message"] += f" Host synchronized median: {host_profile['statistics']['median_ns'] / 1000:.3f} μs ({host_profile['sample_count']} samples)."
-            recipe = self.policy["device"]
+            recipe = self.policy["ttlang"]
             host_recipe_matches = not host_profile.get("available") or (host_profile.get("warmup_count") == recipe["warmup_count"] and host_profile.get("sample_count") == recipe["sample_count"])
             capture = device_profile.get("capture", {}) if isinstance(device_profile.get("capture"), dict) else {}
             device_recipe_matches = not device_profile.get("available") or (capture.get("warmup") == recipe["warmup_count"] and capture.get("sample_count") == recipe["sample_count"])

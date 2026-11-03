@@ -58,8 +58,9 @@ python3 tools/check_e2e.py --only "TT-Lang vector add" "TT-Lang ragged sum" "TT-
     "TT-Lang wrong answer" "TT-Lang compile error" "TT-Lang runtime error"
 ```
 
-Each accepted case takes roughly 10-20 s (host pass + device pass + counter pass, JIT included);
-the largest vector case moves 3 × 64 MB and finishes in about 5 s per pass.
+An accepted submission takes about 30-50 s: one container judges and times all ten
+testcases (about 15-20 s), a second one reads the hardware counters of the accepted
+testcases (about 15 s); JIT compilation is included.
 
 ## 4. Operate the quota
 

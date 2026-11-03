@@ -19,7 +19,7 @@ import uuid
 
 
 POLICY_PATH = Path(__file__).with_name("evaluation-policy.json")
-POLICY_SHA256 = "957d288181743c5e8103758b753ac0a35d946ba4d2e69fca27b10b932501a0b3"
+POLICY_SHA256 = "cfd4486412dde101b93942ee65cbe4c1f5868faf710fbab79d0e726b7e262c6f"
 STATUS_NAMES = {1: "AC", 2: "WA", 3: "TLE", 4: "MLE", 5: "OLE", 6: "RE", 7: "CE", 8: "SE"}
 
 

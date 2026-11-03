@@ -483,6 +483,11 @@ exports.apply = function apply(ctx) {
           used: board.used, limit: board.limit, is_best: !!own };
       } catch (error) { console.warn('tt-site: rank lookup failed:', error.message); }
     }
+    if (handler.response.template === 'main.html') {
+      // The homepage lists fixed problem cards; drop the ones that are hidden for this viewer.
+      const hidden = await global.Hydro.model.problem.getMulti(handler.args.domainId || 'system', { hidden: true }).project({ pid: 1 }).toArray();
+      body.ttHiddenProblems = hidden.map((pdoc) => pdoc.pid);
+    }
     if (Array.isArray(body.pdocs)) body.pdocs = body.pdocs.map(localize);
     if (body.pdoc && !handler.response.template?.startsWith('problem_detail')) body.pdoc = localize(body.pdoc);
     if (body.pdict) body.pdict = Object.fromEntries(Object.entries(body.pdict).map(([id, pdoc]) => [id, localize(pdoc)]));

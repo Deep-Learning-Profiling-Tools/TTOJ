@@ -47,8 +47,8 @@ The judge runs your file on one Blackhole chip in a container that goes through 
 | Wrong Answer (WA) | An element outside tolerance, wrong output shape, or NaN/Inf. | Padding mishandled, mask missing, masked entries leaking into a sum, overflow in `exp`. |
 | Compile Error (CE) | The file could not be compiled. | A Python syntax error, or a `TTLangCompileError` from the TT-Lang compiler. |
 | Runtime Error (RE) | A Python exception while running, or no result produced. | `AssertionError`, a device error, a transaction that never completes, or a missing operation name. |
-| Time Exceeded (TLE) | A pass exceeded the 180 s wall limit (container start, device initialisation, compilation and all timed calls included). | A kernel that is extremely slow or hangs. |
-| Memory Exceeded / Output Exceeded | More than 8 GiB host memory, or more than 256 KiB of stdout/stderr. | Printing in a loop. |
+| Time Exceeded (TLE) | One testcase ran longer than 180 s, counting its correctness call, warmups and timed calls; the first testcase also includes container start, device initialisation and compilation. | A kernel that is extremely slow or hangs. |
+| Memory Exceeded / Output Exceeded | More than 8 GiB host memory, or more than 512 KiB of stdout/stderr per testcase. | Printing in a loop. |
 
 A submission with some failed testcases gets a partial score and the first failing status; only fully accepted submissions are timed on every case and ranked.
 

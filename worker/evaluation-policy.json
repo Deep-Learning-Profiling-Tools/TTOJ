@@ -13,7 +13,7 @@
     "warmup_count": 1
   },
   "device": {
-    "cache_state": "one container per submission and pass; first invocation and three warmups precede the samples; no explicit cache flush",
+    "cache_state": "fresh per-case diagnostic container with first invocation and five warmups; no explicit cache flush",
     "cross_core_total_elapsed_available": false,
     "cross_device_total_elapsed_available": false,
     "csv_preserves_first_call_and_warmups": true,
@@ -21,23 +21,21 @@
     "profiler_enabled": true,
     "raw_unit": "cycles",
     "repeatability_check": "first and final output, not every invocation",
-    "same_run_as_correctness": true,
-    "sample_count": 7,
+    "sample_count": 10,
     "scope": "same device/core/RISC kernel cycles and same-core envelopes; stage occurrence aligned within sample",
     "selection": "csv_append_byte_ranges",
-    "separate_fresh_container": false,
-    "warmup_count": 3
+    "separate_fresh_container": true,
+    "warmup_count": 5
   },
   "formal_ranking_enabled": false,
   "host": {
-    "cache_state": "one container per submission and pass; warm program cache; first invocation and three warmups precede the samples; no explicit L1/DRAM cache flush",
+    "cache_state": "warm program cache within a fresh per-case container; first invocation and five warmups precede timing; no explicit L1/DRAM cache flush",
     "excludes": [
       "container_startup",
       "device_initialization",
       "first_call_JIT",
       "input_upload",
-      "output_readback",
-      "profiler_export"
+      "output_readback"
     ],
     "includes": [
       "host_enqueue",
@@ -45,17 +43,16 @@
       "device_workload",
       "completion_wait"
     ],
-    "measured_in": "the profiler-instrumented pass, around the same invocations whose device cycles are captured",
     "metalium_scope": "EnqueueMeshWorkload plus distributed::Finish",
     "outlier_policy": "keep_all",
-    "profiler_enabled": true,
+    "profiler_enabled": false,
     "raw_unit": "ns",
     "repeatability_check": "first and final output, not every invocation",
-    "sample_count": 7,
+    "sample_count": 50,
     "samples_independent": false,
     "scope": "host_submit_to_device_complete",
     "ttnn_scope": "Python solve(a,b) plus device synchronization; allocation inside solve included",
-    "warmup_count": 3
+    "warmup_count": 5
   },
   "id": "tt-oj-diagnostic-v2",
   "passes": {
@@ -64,7 +61,7 @@
       "counters: the accepted testcases in a second container"
     ],
     "ttnn_metalium": [
-      "host, device and (TT-Lang only) counters passes, one fresh container per testcase and pass"
+      "host and device passes, one fresh container per testcase and pass"
     ]
   },
   "purpose": "diagnostic_correctness_and_profiling",
@@ -132,5 +129,16 @@
     "retention": "indefinite until manual administrator removal; no automatic source publication",
     "schema_version": 2,
     "timestamps": "UTC wall time plus host monotonic_ns; no fabricated enqueue or cross-host clock alignment"
+  },
+  "ttlang": {
+    "applies_to": "ttlang problems: host and device timing of the profile pass (one container, every testcase)",
+    "cache_state": "one container per submission and pass; first invocation and three warmups precede the samples; no explicit cache flush",
+    "device_same_run_as_correctness": true,
+    "device_selection": "csv_append_byte_ranges",
+    "host_measured_in": "the profiler-instrumented pass, around the same invocations whose device cycles are captured",
+    "host_profiler_enabled": true,
+    "sample_count": 7,
+    "separate_fresh_container": false,
+    "warmup_count": 3
   }
 }
