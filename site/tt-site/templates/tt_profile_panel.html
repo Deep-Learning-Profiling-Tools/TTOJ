@@ -8,7 +8,7 @@
       {# Viewer is neither the owner nor staff: verdicts and device times only. #}
       <div class="tt-card">
         <h2>Performance</h2>
-        <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 10 instrumented samples per testcase, geometric mean over testcases.</p>
+        <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 7 instrumented samples per testcase, geometric mean over testcases.</p>
         <div class="tt-stats">
           <div class="tt-stat"><b>Device time (geomean)</b><span>{{ ttProfile.device_geomean_us or '—' }} µs</span><small>{% if ttRank and ttRank.speedup %}{{ ttRank.speedup }}× vs single-core reference ({{ ttRank.reference_geomean_us }} µs){% elif not ttProfile.device_complete %}needs every testcase accepted{% endif %}</small></div>
           {% if ttRank %}<div class="tt-stat"><b>Leaderboard</b><span>{% if ttRank.rank %}#{{ ttRank.rank }} <small style="display:inline">of {{ ttRank.total }}</small>{% elif ttRank.best_rank %}#{{ ttRank.best_rank }}{% else %}—{% endif %}</span><small>{% if ttRank.rank %}this submission{% elif ttRank.best_rank %}this account's best submission; this one is slower{% else %}not ranked (not accepted or no device timing){% endif %} · <a href="/leaderboard#{{ pdoc.pid }}">view</a></small></div>{% endif %}
@@ -33,7 +33,7 @@
       {% else %}
       <div class="tt-card">
         <h2>Performance</h2>
-        <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 10 instrumented samples per testcase, geometric mean over testcases. Host times are diagnostics only.</p>
+        <p class="tt-lead">Device time is the ranked metric: first kernel start to last kernel end over all cores, median of 7 instrumented samples per testcase, geometric mean over testcases. Host times are diagnostics only.</p>
         <div class="tt-stats">
           <div class="tt-stat"><b>Device time (geomean)</b><span>{{ ttProfile.device_geomean_us or '—' }} µs</span><small>{% if ttRank and ttRank.speedup %}{{ ttRank.speedup }}× vs single-core reference ({{ ttRank.reference_geomean_us }} µs){% elif not ttProfile.device_complete %}needs every testcase accepted{% endif %}</small></div>
           {% if ttRank %}<div class="tt-stat"><b>Leaderboard</b><span>{% if ttRank.rank %}#{{ ttRank.rank }} <small style="display:inline">of {{ ttRank.total }}</small>{% elif ttRank.best_rank %}#{{ ttRank.best_rank }}{% else %}—{% endif %}</span><small>{% if ttRank.rank %}this submission{% elif ttRank.best_rank %}{{ 'your' if isOwner else "this account's" }} best submission; this one is slower{% else %}not ranked (not accepted or no device timing){% endif %} · <a href="/leaderboard#{{ pdoc.pid }}">view</a></small></div>{% endif %}
@@ -80,7 +80,7 @@
       {% if ttProfile.counters_available %}
       <div class="tt-card">
         <h2>Hardware counters</h2>
-        <p class="tt-lead">Read from the Tensix counter groups FPU, PACK, UNPACK and INSTRN in a separate pass (2 warmups, 3 samples). Thread 0/1/2 are the unpack, math and pack instruction threads of each core. With many cores, compare the mean with the busiest core: a low mean and a high maximum means the work is unevenly split.</p>
+        <p class="tt-lead">Read from the Tensix counter groups FPU, PACK, UNPACK and INSTRN in a second container (1 warmup, 3 samples per accepted testcase). Thread 0/1/2 are the unpack, math and pack instruction threads of each core. With many cores, compare the mean with the busiest core: a low mean and a high maximum means the work is unevenly split.</p>
         {% for c in ttProfile.cases %}{% if c.counters %}
         <details class="tt-case-detail"{% if loop.first %} open{% endif %}>
           <summary>Testcase {{ c.id }} · {{ c.counters.cores }} core{{ 's' if c.counters.cores != 1 }} · window {{ c.counters.window_us }} µs{% if not c.counters.valid %} · <span class="tt-badge warn">incomplete</span>{% endif %}</summary>
@@ -110,7 +110,7 @@
 
       <div class="tt-card">
         <h2>Device timing details</h2>
-        <p class="tt-lead">Per-core, per-RISC kernel cycles from the instrumented pass (5 warmups, 10 samples). BRISC and NCRISC run the data-movement kernels; TRISC0/1/2 run unpack, math and pack. Parallel stages overlap, so their durations must not be summed.</p>
+        <p class="tt-lead">Per-core, per-RISC kernel cycles from the instrumented run (3 warmups, 7 samples, after the correctness invocation). BRISC and NCRISC run the data-movement kernels; TRISC0/1/2 run unpack, math and pack. Parallel stages overlap, so their durations must not be summed.</p>
         {% for c in ttProfile.cases %}
         <details class="tt-case-detail">
           <summary>Testcase {{ c.id }} · device time {{ c.display_device_time_us }} µs{% if c.device.available and not c.device.valid %} · <span class="tt-badge warn">capture incomplete</span>{% endif %}</summary>
@@ -127,7 +127,7 @@
           {% endif %}
         </details>
         {% endfor %}
-        <p class="tt-note">This submission ran alone on Blackhole chip{% if ttProfile.scheduler.device_ids and ttProfile.scheduler.device_ids.length > 1 %}s{% endif %} {{ ttProfile.scheduler.device_ids|join(', ') if ttProfile.scheduler.device_ids else '—' }} (up to four submissions are judged at once, one chip each); CPU affinity: {{ ttProfile.scheduler.cpu_affinity }}. Measurements are diagnostic; outside host workloads are not fully excluded.</p>
+        <p class="tt-note">This submission ran alone on Blackhole chip{% if ttProfile.scheduler.device_ids and ttProfile.scheduler.device_ids.length > 1 %}s{% endif %} {{ ttProfile.scheduler.device_ids|join(', ') if ttProfile.scheduler.device_ids else '—' }} ({% if ttProfile.scheduler.pool_device_ids %}the judge's pool is chips {{ ttProfile.scheduler.pool_device_ids|join(', ') }}, up to {{ ttProfile.scheduler.pool_device_ids.length }} submissions at once, one chip each{% else %}one chip per submission{% endif %}); CPU affinity: {{ ttProfile.scheduler.cpu_affinity }}. Measurements are diagnostic; outside host workloads are not fully excluded.</p>
       </div>
       {% endif %}
     {% else %}

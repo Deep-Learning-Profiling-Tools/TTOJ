@@ -5,8 +5,15 @@
     "expected_output_visibility": "restricted archive only",
     "self_test_without_reference": "not a benchmark correctness result"
   },
+  "counters": {
+    "cases": "accepted testcases of the profile pass only",
+    "reason": "the Tensix counters are compiled into the kernels (PROFILE_PERF_COUNTERS); their read-out perturbs the kernel window, so the ranked device time comes from the pass without them",
+    "sample_count": 3,
+    "separate_container": true,
+    "warmup_count": 1
+  },
   "device": {
-    "cache_state": "fresh per-case diagnostic container with first invocation and five warmups; no explicit cache flush",
+    "cache_state": "one container per submission and pass; first invocation and three warmups precede the samples; no explicit cache flush",
     "cross_core_total_elapsed_available": false,
     "cross_device_total_elapsed_available": false,
     "csv_preserves_first_call_and_warmups": true,
@@ -14,21 +21,23 @@
     "profiler_enabled": true,
     "raw_unit": "cycles",
     "repeatability_check": "first and final output, not every invocation",
-    "sample_count": 10,
+    "same_run_as_correctness": true,
+    "sample_count": 7,
     "scope": "same device/core/RISC kernel cycles and same-core envelopes; stage occurrence aligned within sample",
     "selection": "csv_append_byte_ranges",
-    "separate_fresh_container": true,
-    "warmup_count": 5
+    "separate_fresh_container": false,
+    "warmup_count": 3
   },
   "formal_ranking_enabled": false,
   "host": {
-    "cache_state": "warm program cache within a fresh per-case container; first invocation and five warmups precede timing; no explicit L1/DRAM cache flush",
+    "cache_state": "one container per submission and pass; warm program cache; first invocation and three warmups precede the samples; no explicit L1/DRAM cache flush",
     "excludes": [
       "container_startup",
       "device_initialization",
       "first_call_JIT",
       "input_upload",
-      "output_readback"
+      "output_readback",
+      "profiler_export"
     ],
     "includes": [
       "host_enqueue",
@@ -36,40 +45,51 @@
       "device_workload",
       "completion_wait"
     ],
+    "measured_in": "the profiler-instrumented pass, around the same invocations whose device cycles are captured",
     "metalium_scope": "EnqueueMeshWorkload plus distributed::Finish",
     "outlier_policy": "keep_all",
-    "profiler_enabled": false,
+    "profiler_enabled": true,
     "raw_unit": "ns",
     "repeatability_check": "first and final output, not every invocation",
-    "sample_count": 50,
+    "sample_count": 7,
     "samples_independent": false,
     "scope": "host_submit_to_device_complete",
     "ttnn_scope": "Python solve(a,b) plus device synchronization; allocation inside solve included",
-    "warmup_count": 5
+    "warmup_count": 3
   },
-  "id": "tt-oj-diagnostic-v1",
+  "id": "tt-oj-diagnostic-v2",
+  "passes": {
+    "ttlang": [
+      "profile: every testcase in one container (correctness, host and device timing)",
+      "counters: the accepted testcases in a second container"
+    ],
+    "ttnn_metalium": [
+      "host, device and (TT-Lang only) counters passes, one fresh container per testcase and pass"
+    ]
+  },
   "purpose": "diagnostic_correctness_and_profiling",
   "ranking_blockers": [
     "cpu_irq_isolation_not_verified",
     "external_host_workloads_not_fully_excluded",
     "clock_frequency_not_locked_or_calibrated",
-    "device_profiler_is_instrumented_separate_pass",
     "cross_core_total_device_elapsed_not_calibrated",
-    "submission_wrapper_not_tamper_attested"
+    "submission_wrapper_not_tamper_attested",
+    "device_profiler_is_instrumented"
   ],
   "resources": {
     "cpuset": "deployment supplied and recorded; does not isolate OS/IRQ tasks",
-    "device_csv_limit_bytes": 16777216,
+    "device_csv_limit_bytes": 67108864,
     "max_case_timeout_s": 180,
     "memory_bytes": 8589934592,
     "output_capture_limit_bytes": 262144,
+    "per_case_timeout_s": 180,
     "pids": 512,
     "swap_bytes": 0,
     "tmpfs_bytes": 2147483648,
-    "wall_timeout_includes": "container startup, initialization, JIT, transfers, benchmark and output; per pass"
+    "wall_timeout_includes": "TT-Lang: per testcase inside the shared container, measured from its start marker; ttnn/Metalium: container startup, initialization, JIT, transfers, benchmark and output, per pass"
   },
   "scheduler": {
-    "concurrency": 1,
+    "concurrency": 3,
     "discovered_device_ids": [
       0,
       1,
@@ -77,11 +97,17 @@
       3
     ],
     "external_exclusion": "OJ advisory lock and known Docker device consumers only",
-    "queue": "Hydro priority queue; broker records receipt, not enqueue",
-    "reservation": "whole_mesh",
-    "submission_device_ids": [
-      0
+    "pool_device_ids": [
+      0,
+      1,
+      2
     ],
+    "queue": "Hydro priority queue; broker records receipt, not enqueue",
+    "reservation": "single_chip",
+    "reserved_for_other_users": [
+      3
+    ],
+    "submission_device_ids": "one chip of the pool per TT-Lang submission",
     "thermal_preflight_max_c": 85,
     "thermal_wait_timeout_s": 120
   },

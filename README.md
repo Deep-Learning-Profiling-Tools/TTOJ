@@ -7,8 +7,10 @@ versioned correctness and profiling records.
 
 The current deployment has been validated on two p300c cards containing four
 Blackhole ASICs. **TT-Lang submissions are judged in parallel, one chip per
-submission (up to four at once); the ttnn and Metalium runtimes reserve the
-entire device topology and run alone.** This is a platform for trusted
+submission (`TT_OJ_CHIPS`, by default chips 0-2 with chip 3 left to interactive
+users), each in one container for all testcases plus one for the hardware
+counters; the ttnn and Metalium runtimes reserve the whole pooled topology and
+run alone.** This is a platform for trusted
 research users; hostile multi-tenant evaluation is not implemented.
 
 ## Features
@@ -221,8 +223,8 @@ named `tt-oj-diagnostic-v1` and hash-pinned by the worker.
 
 | Metric | Recipe | Meaning |
 | --- | --- | --- |
-| Host synchronized-call latency | First correctness/JIT call, 5 warmups, 50 samples; device profiler disabled | TTNN `solve + synchronize_device`, or Metalium enqueue + finish; includes dispatch and completion wait |
-| Device kernel cycles | Separate profiler-enabled pass, 5 warmups, 10 selected repeats | Official per-device/core/RISC/stage intervals and same-core envelopes; raw cycles plus frequency-derived nanoseconds |
+| Host synchronized-call latency | ttnn/Metalium: first correctness/JIT call, 5 warmups, 50 samples, profiler disabled. TT-Lang: 3 warmups, 7 samples around the profiled invocations | TTNN `solve + synchronize_device`, or Metalium enqueue + finish; includes dispatch and completion wait |
+| Device kernel cycles | ttnn/Metalium: separate profiler-enabled pass, 5 warmups, 10 selected repeats. TT-Lang: same run as correctness, 3 warmups, 7 selected repeats | Official per-device/core/RISC/stage intervals and same-core envelopes; raw cycles plus frequency-derived nanoseconds |
 
 Container wall time used for OJ limits includes startup, device initialization,
 JIT, and transfers. It is separate from both performance metrics. Memory is

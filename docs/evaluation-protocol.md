@@ -24,8 +24,8 @@ or lifecycle events are not reconstructed retrospectively.
 
 | Measurement | Recipe | Included | Excluded |
 | --- | --- | --- | --- |
-| Host synchronized call | Fresh container per case; first correctness/JIT invocation, 5 warmups, 50 timed repeats; profiler disabled | TTNN `solve(a,b)` followed by device synchronization, including allocations inside `solve`; Metalium `EnqueueMeshWorkload` followed by `distributed::Finish` | Container startup, device initialization, first-call JIT, input upload and output download |
-| Device kernel cycles | Separate fresh container per accepted case; profiler enabled; first invocation, 5 warmups, 10 selected repeats | Official firmware kernel zones, grouped by device/core/RISC and ordered stage occurrence; same-core envelopes | Initial invocation and warmup events are excluded from selected statistics; profiler flush/export is outside kernel cycle intervals |
+| Host synchronized call | ttnn/Metalium: fresh container per case; first correctness/JIT invocation, 5 warmups, 50 timed repeats; profiler disabled. TT-Lang: one container for all cases, profiler enabled; 3 warmups, 7 timed repeats around the invocations whose device cycles are captured | TTNN `solve(a,b)` followed by device synchronization, including allocations inside `solve`; Metalium `EnqueueMeshWorkload` followed by `distributed::Finish` | Container startup, device initialization, first-call JIT, input upload and output download |
+| Device kernel cycles | ttnn/Metalium: separate fresh container per accepted case; profiler enabled; first invocation, 5 warmups, 10 selected repeats. TT-Lang: the same run as correctness and host timing; first invocation, 3 warmups, 7 selected repeats | Official firmware kernel zones, grouped by device/core/RISC and ordered stage occurrence; same-core envelopes | Initial invocation and warmup events are excluded from selected statistics; profiler flush/export is outside kernel cycle intervals |
 
 For the CS540 TT-Lang problems (`ttlang` mode) both recipes apply unchanged to the
 submitted `@ttl.operation` call: the host pass times `operation(inputs..., out)` plus
@@ -39,7 +39,7 @@ mean of device time over the testcases; host timings and wall time are never ran
 Cross-core spans assume the per-core cycle counters are aligned; tt-metal documents
 minor skew between cores.
 
-A third, separate pass (2 warmups, 3 selected samples) runs with
+For TT-Lang, a second container (1 warmup, 3 selected samples per accepted case) runs with
 `TT_METAL_PROFILE_PERF_COUNTERS=39` (FPU, PACK, UNPACK and INSTRN groups). The
 runtime reads the Tensix counters on every core after each compute kernel and
 appends one `TS_DATA` row per counter to the device CSV; `worker/perf_counters.py`
@@ -54,10 +54,34 @@ the wrapper against a PyTorch reference with the manifest's `tolerance`
 The wrapper's one-line correctness detail (mismatch count, max error) is appended to
 the case message, and numeric correctness fields are copied into the public report.
 
-Both passes warm the program cache in their own process. There is **no explicit
+Each pass warms the program cache in its own process. There is **no explicit
 L1 or DRAM cache flush**. Separate passes can have different thermal, cache and
 scheduling conditions. Profiling changes the workload and inter-sample spacing;
-never merge instrumented device latency into uninstrumented host samples.
+TT-Lang host samples are taken with the profiler enabled and therefore include
+its overhead (profiler export itself happens outside the timed call).
+
+### TT-Lang: two containers per submission
+
+Since round 4 a TT-Lang submission is judged in two containers, not three per
+testcase. The `profile` container opens the chip once and, for every testcase in
+order, uploads the inputs, runs the operation once (correctness against the
+PyTorch reference, first-call latency including JIT), then 3 warmups and 7 timed
+samples whose device cycles are captured by byte range from the profiler CSV. A
+wrong result is never timed; the batch stops at the first case that raises,
+because the device state is not trusted afterwards. The wrapper writes one CSV
+per case (`/tmp/tt-oj-cases/case-N-profile.csv`: the two header lines plus that
+case's rows, byte ranges rebased), which the broker collects before the
+container exits, so `case-N-device.csv` and its parser are unchanged. The
+`counters` container repeats this for the accepted cases only with
+`TT_METAL_PROFILE_PERF_COUNTERS` (1 warmup, 3 samples); the counters are
+compiled into the kernels, so they cannot share a process with the ranked
+timing. The output limit is 512 KiB per testcase for the whole container (the kernel
+compiler's notes alone are about 120 KB per softmax testcase). Per-case wall limits apply inside the batch: the broker watches the
+`TT_OJ_CASE_START` markers and ends the container with TLE when a case runs
+longer than the limit; CSVs of finished cases are salvaged first. Container
+start, `import ttnn` and device initialisation (about 6 s) are therefore paid
+twice per submission instead of thirty times.
+
 
 Raw host values are stored in nanoseconds. Device CSVs retain raw counter cycles;
 the parser derives nanoseconds as `cycles * 1000 / recorded_MHz`. Recorded MHz is
@@ -104,15 +128,17 @@ has been established; the platform currently assumes trusted account holders.
 ## Scheduling and environment provenance
 
 The host has four Blackhole chips (`/dev/tenstorrent/0-3`, two p300 boards).
-The worker requests `concurrency: 4` from Hydro and keeps a chip pool: a
-TT-Lang job takes one free chip for its whole lifetime, so up to four
+`TT_OJ_CHIPS` (default `0,1,2`) lists the chips the judge may use; chip 3 is
+left to interactive users of the machine, always the same one. The worker
+requests `concurrency: <pool size>` from Hydro and keeps a chip pool: a
+TT-Lang job takes one free chip for its whole lifetime, so up to three
 submissions are judged at the same time, each on its own chip; the ttnn and
-Metalium runtimes discover the whole mesh and therefore take all four chips
-and run alone. Inside a TT-Lang container the reserved chip is mapped to
+Metalium runtimes discover the whole mesh and therefore take every pooled chip
+and run alone (they need `TT_OJ_CHIPS=0,1,2,3` to see a supported topology). Inside a TT-Lang container the reserved chip is mapped to
 `/dev/tenstorrent/0` and `TT_MESH_GRAPH_DESC_PATH` names the bundled one-chip
 (p150) mesh descriptor, because tt-metal treats a lone chip as a "CUSTOM"
-cluster and refuses to start without one. Within a job, cases and the three
-passes still run sequentially. The report's `scheduler.device_ids` records the
+cluster and refuses to start without one. Within a job, the testcases and the two
+containers still run sequentially. The report's `scheduler.device_ids` records the
 chip; chips share the host CPU set and PCIe root, which can perturb host-side
 timings but not the on-device kernel cycles that are ranked. A process-lifetime
 advisory `flock` still prevents two workers from starting on one host.
@@ -190,7 +216,8 @@ data/jobs/<record_id>/attempts/<attempt_id>/     restricted archive
   manifest.json                               exact fetched bytes; includes references
   events.jsonl                                broker lifecycle
   case-N-host.stdout / .stderr / .json         bounded raw bytes and execution metadata
-  case-N-device.stdout / .stderr / .json       separate pass, when executed
+  case-N-device.stdout / .stderr / .json       separate pass, when executed (ttnn/Metalium)
+  case-0-profile.* / case-0-counters.*         TT-Lang batch containers (all cases)
   N/ and N-device/                            per-pass bind mount contents
   case-N-device.csv                           raw profiler CSV, when captured
   terminal-details.json / hydro-cases.json     full judge diagnostics, when produced

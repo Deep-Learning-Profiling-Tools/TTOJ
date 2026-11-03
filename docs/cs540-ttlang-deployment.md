@@ -38,9 +38,15 @@ and advertises the `ttlang` language to Hydro. The site addon registers the
 mounted, so the three new folders are seeded on the next site start
 (existing problems are never overwritten; `site/reseed.sh` forces a reseed).
 
-The worker judges up to four submissions at once, one per Blackhole chip
-(`TT_OJ_CHIP_COUNT`, `TT_OJ_CONCURRENCY`, default 4; see
-`docs/evaluation-protocol.md`, "Scheduling"). Restart the site only when the
+The worker judges up to three submissions at once, one per Blackhole chip
+(`TT_OJ_CHIPS`, default `0,1,2`; `TT_OJ_CONCURRENCY` defaults to the pool
+size; see `docs/evaluation-protocol.md`, "Scheduling"). Chip 3 is never
+touched by the judge and stays free for other users of the machine. A
+TT-Lang submission runs in two containers: one judges every testcase, the
+other reads the hardware counters of the accepted ones; an accepted
+solution takes about a minute. `TT_OJ_HIDDEN_PROBLEMS` in `.env` (the
+CS540 instance sets `TT1001,TT1002,TT2001,TT2002`) hides the TTNN and
+Metalium demos, which need the whole mesh, from students. Restart the site only when the
 queue is empty: records that are being judged while the site process restarts
 stay "Judging" and must be rejudged by hand. Restarting the worker is safe;
 Hydro re-queues its in-flight records.
@@ -89,16 +95,59 @@ submission).
 
 ## 5. Student accounts, guide and backups
 
-Registration is disabled. Create accounts as the administrator at
-`/manage/userimport` (one `email,username,password` line per student, preview,
-import) or with
-`hydrooj cli execute "await global.Hydro.model.user.create('email', 'uname', 'password')"`
-inside the site container, and tell students to change the password at
-`/home/security`. Hand out [`docs/student-guide.md`](student-guide.md) after
-filling in the OJ URL. Daily database and report backups are described in
-[`docs/backups.md`](backups.md).
+Registration is disabled. Create accounts from a roster CSV
+(`email,username,password[,displayName]`, one student per line; keep the file
+outside the repository, for example `data/accounts/`, which is ignored by git)
+with `tools/import-accounts.js`, which runs inside the site container so that
+no password passes through a command line:
 
-## 6. Without Docker (development only)
+```bash
+S=tenstorrent-oj-site-1   # or tenstorrent-oj-staging-site-1
+docker cp tools/import-accounts.js $S:/tmp/import-accounts.js
+docker cp data/accounts/roster.csv $S:/tmp/roster.csv
+docker exec $S sh -c 'cd /opt/hydro && hydrooj cli execute "await require(\"/tmp/import-accounts.js\")(\"/tmp/roster.csv\")"'
+docker exec $S rm /tmp/roster.csv /tmp/import-accounts.js
+```
+
+It prints `username -> uid` for created accounts, skips usernames that already
+exist (their passwords are not reset) and lists failures. The CS540 roster
+(16 accounts, GMU NetID as username, `netid@gmu.edu` as e-mail, the student's
+G number as the initial password) was imported this way on 2026-11-03; students
+change the password at `/home/security`. Single accounts can also be made at
+`/manage/userimport` or with
+`hydrooj cli execute "await global.Hydro.model.user.create('email', 'uname', 'password')"`.
+Hand out [`docs/student-guide.md`](student-guide.md). Daily database and report
+backups are described in [`docs/backups.md`](backups.md).
+
+## 6. Going live behind the existing tunnel
+
+Students reach the course OJ at `http://98.93.3.136:28888/`. That address is a
+reverse SSH tunnel that jgu7's account on the TT machine keeps open to an AWS
+host (`ssh -R 0.0.0.0:28888:127.0.0.1:8888 ubuntu@ec2-98-93-3-136...`): every
+visitor of port 28888 on the AWS host is forwarded to port 8888 on the TT
+machine, where jgu7's `main`-branch deployment (`/home/jgu7/work/tenstorrent-oj`,
+run as root) listens. Only one program can own port 8888, so the switch to this
+branch needs one action by jgu7 (or any root user), either:
+
+- **Re-aim the tunnel** (nothing else changes): replace `127.0.0.1:8888` by
+  `127.0.0.1:18888` in the tunnel command (systemd unit or script) and restart
+  that one process. The staging deployment in `/home/bcui2/research/TTOJ-staging`
+  (compose project `tenstorrent-oj-staging`, port 18888, `restart: unless-stopped`,
+  so it survives reboots and logouts) becomes the course OJ immediately.
+- **Or hand over port 8888**: stop the old deployment
+  (`docker compose down` in `/home/jgu7/work/tenstorrent-oj`, which keeps its
+  volumes), then change `127.0.0.1:18888:8888` to `127.0.0.1:8888:8888` in
+  `compose.staging.yaml` and run `docker compose -p tenstorrent-oj-staging -f
+  compose.yaml -f compose.staging.yaml up -d site`. The tunnel is untouched.
+
+Either way the old deployment's accounts and records do not carry over (it has
+no TT-Lang problems). Merging PR #1 into `main` is independent of this switch:
+a running deployment only changes when somebody rebuilds it from the merged
+checkout (`git pull && docker compose build worker site backup && docker compose
+up -d`), and that checkout must then set `TT_OJ_CHIPS`, `TT_OJ_HIDDEN_PROBLEMS`
+and the accounts as described above.
+
+## 7. Without Docker (development only)
 
 ```bash
 python3 tools/ttlang_local_judge.py --problem ttlang-ragged-softmax \

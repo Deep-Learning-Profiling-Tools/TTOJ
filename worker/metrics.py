@@ -124,7 +124,7 @@ def quality_report(cases):
     warnings = [
         "Host CPU sets separate OJ services but do not isolate OS tasks or IRQs.",
         "The mesh lock coordinates OJ workers; host programs outside OJ are not fully excluded.",
-        "Device profiler is an instrumented diagnostic pass; do not mix its latency with the uninstrumented host pass.",
+        "Device cycles and host latencies are measured with the device profiler enabled; host latencies include its overhead and are diagnostic only.",
         "Nanoseconds are storage units and clock resolution, not a nanosecond accuracy guarantee.",
     ]
     if any(c.get("host", {}).get("statistics", {}).get("cv_percent", 0) > 5 for c in cases):
@@ -134,7 +134,7 @@ def quality_report(cases):
     if any(c.get("runtime_affinity_warning") for c in cases):
         warnings.append("The SDK reported a thread affinity failure; container CPU affinity still applies, but per-thread placement is not assured.")
     reasons = ["cpu_irq_isolation_not_verified", "external_host_workloads_not_fully_excluded",
-               "clock_frequency_not_locked_or_calibrated", "device_profiler_is_instrumented_separate_pass",
+               "clock_frequency_not_locked_or_calibrated", "device_profiler_is_instrumented",
                "cross_core_total_device_elapsed_not_calibrated", "submission_wrapper_not_tamper_attested"]
     if not cases:
         reasons.append("no_completed_cases")

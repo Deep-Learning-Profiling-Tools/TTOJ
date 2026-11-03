@@ -19,7 +19,7 @@ import uuid
 
 
 POLICY_PATH = Path(__file__).with_name("evaluation-policy.json")
-POLICY_SHA256 = "429717d46515f57149cfc53645d17b43403877379feed1a02365f9286b52e0cf"
+POLICY_SHA256 = "957d288181743c5e8103758b753ac0a35d946ba4d2e69fca27b10b932501a0b3"
 STATUS_NAMES = {1: "AC", 2: "WA", 3: "TLE", 4: "MLE", 5: "OLE", 6: "RE", 7: "CE", 8: "SE"}
 
 
@@ -202,7 +202,7 @@ class Attempt:
             metadata = {"case_id": case_id, "pass": pass_name,
                 "container_id": execution.container.id,
                 "output_truncated": bool(execution.output_exceeded),
-                "output_limit_bytes": 262144, "peak_host_memory_bytes": execution.peak_memory,
+                "output_limit_bytes": getattr(execution, "output_limit", 262144), "peak_host_memory_bytes": execution.peak_memory,
                 "reader_error": execution.thread_error}
             if outcome:
                 metadata.update({key: outcome.get(key) for key in ("status", "time", "memory", "exit_code", "telemetry")})

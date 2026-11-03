@@ -67,8 +67,8 @@ Inputs are generated from a fixed seed, so every submission sees the same data.
 ## Profile summary
 
 Every accepted case returns a profile summary on the record page. The number that counts is the
-**device time**: in a separate instrumented pass (5 warmups, 10 samples), the time from the first kernel
-start to the last kernel end over all cores, median over the samples. It excludes host dispatch, JIT
+**device time**: with the device profiler enabled (first invocation checked for correctness, then 3 warmups and
+7 samples), the time from the first kernel start to the last kernel end over all cores, median over the samples. It excludes host dispatch, JIT
 compilation and data transfers. The submission's score for the **leaderboard** is the geometric mean of the
 device times of the {case_count} testcases; the leaderboard lists each account's fastest accepted submission
 and its speedup over the single-core reference ({reference_geomean} µs). Report device times in your report.

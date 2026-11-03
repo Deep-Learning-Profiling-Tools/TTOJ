@@ -51,6 +51,8 @@ services:
       PROFILES_DIR: /profiles
       BENCHMARK_CPUSET: "${BENCHMARK_CPUSET:-4-7,12-15}"
       TT_OJ_DEVICE_PROFILER_SUPPORTED: "1"
+      # /dev/tenstorrent indices the judge may use; the others stay free for interactive users.
+      TT_OJ_CHIPS: "${TT_OJ_CHIPS:-0,1,2}"
       JOBS_HOST_DIR: "${JOBS_HOST_DIR:-${PWD}/data/jobs}"
       TTNN_IMAGE: "${TTNN_IMAGE:-tt-oj-profiler-runtime:0.79.0}"
       METALIUM_IMAGE: "${METALIUM_IMAGE:-tt-oj-metalium-profiler:0.79.0}"

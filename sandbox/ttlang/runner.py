@@ -4,17 +4,29 @@ Only submission.py and this wrapper reach the job. The wrapper owns input
 generation, padding, device allocation, the reference computation and the
 tolerance check; the submission only provides the TT-Lang operation.
 
-stdin: one JSON object (the problem test case), for example
-  {"exercise": "vector-add", "entry": "vector_add", "seed": 540, "case_id": 3,
-   "N": 1025, "tolerance": {"atol": 1e-6, "rtol": 0.00390625}}
-  {"exercise": "ragged-sum", "entry": "ragged_sum", "seed": 540, "case_id": 1,
-   "R": 256, "L": 65, "tolerance": {"atol": 1e-6, "rtol": 0.00390625}}
-  {"exercise": "ragged-softmax", "entry": "ragged_softmax", ...}
+stdin: one JSON batch from the judge worker. Every testcase of a submission runs
+in this one process (one device open, one program cache), so container start,
+device initialisation and import time are paid once per pass, not per testcase:
+  {"pass": "profile" | "counters" | "host", "warmup": 3, "samples": 7,
+   "cases": [{"id": 1, "spec": {"exercise": "vector-add", "entry": "vector_add", "seed": 540,
+                                "case_id": 1, "N": 1025, "tolerance": {"atol": 1e-6, "rtol": 0.00390625}}},
+             {"id": 2, "spec": {"exercise": "ragged-sum", "entry": "ragged_sum", "seed": 540, "case_id": 2,
+                                "R": 256, "L": 65, "tolerance": {"atol": 1e-6, "rtol": 0.00390625}}}]}
+A bare testcase spec (no "cases" key) is the legacy one-case form selected by the
+TT_OJ_PROFILE_ONLY / TT_OJ_COUNTERS_ONLY / TT_OJ_WARMUP / TT_OJ_SAMPLES variables.
 
-stdout markers (read by the judge worker):
-  TT_OJ_RESULT:{"verdict": "pass"}            exact text on success; anything else is a wrong answer
-  TT_OJ_DETAIL:<one line of human-readable correctness detail>
-  TT_OJ_PROFILE:{...}                        host timing samples or device-capture metadata
+Passes: "profile" (device profiler on) checks correctness on the first invocation of each
+case, then times warmups and samples both on the host and in the device profiler;
+"counters" does the same with the Tensix performance counters compiled into the kernels;
+"host" measures host latency without the profiler. A wrong result is never timed, and the
+batch stops at the first case that raises, because the device state is not trusted afterwards.
+
+stdout markers (one line each, read by the judge worker):
+  TT_OJ_CASE_START:{"id": 3}
+  TT_OJ_CASE:{"id": 3, "result": {"verdict": "pass"}, "detail": "...", "profile": {...},
+              "csv": "/tmp/tt-oj-cases/case-3-profile.csv", "wall_ns": 1234567}
+  TT_OJ_CASE:{"id": 4, "error": "<traceback tail>"}
+Legacy single-case runs also print TT_OJ_RESULT: / TT_OJ_DETAIL: / TT_OJ_PROFILE: lines.
 """
 import hashlib
 import importlib.util
@@ -24,6 +36,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import traceback
 
 import torch
 import ttnn
@@ -144,111 +157,185 @@ def load_submission(entry):
     return function
 
 
-def main():
-    spec = json.load(sys.stdin)
-    case = Case(spec)
-    operation = load_submission(case.entry)
-    device = ttnn.open_device(device_id=0)
+CASE_START = "TT_OJ_CASE_START:"
+CASE_DONE = "TT_OJ_CASE:"
+CASES_DIR = Path(os.getenv("TT_OJ_CASE_DIR", "/tmp/tt-oj-cases"))
+PASSES = ("host", "profile", "counters")
+
+
+def emit(marker, payload):
+    print(marker + json.dumps(payload, allow_nan=False), flush=True)
+
+
+class ProfilerCapture:
+    """Slices the append-only device profiler CSV into one file per testcase.
+
+    ``ReadDeviceProfiler`` appends the rows of every invocation since the previous read, so a
+    testcase's rows are the bytes between the file size before its first invocation and the size
+    after its last flush. Each per-case file repeats the two header lines and the sample byte
+    ranges are rebased to it, so the judge parses it exactly like a single-case capture.
+    """
+
+    def __init__(self, device, pass_name):
+        self.device = device
+        self.pass_name = pass_name
+        self.path = Path(os.getenv("TT_METAL_PROFILER_DIR", "/tmp/generated/profiler")) / ".logs" / "profile_log_device.csv"
+        self.header = None
+
+    def size(self):
+        return self.path.stat().st_size if self.path.exists() else 0
+
+    def flush(self):
+        ttnn.ReadDeviceProfiler(self.device)
+
+    def write_case(self, case_id, start, ranges):
+        data = self.path.read_bytes()
+        if self.header is None:
+            first = data.find(b"\n")
+            second = data.find(b"\n", first + 1) if first >= 0 else -1
+            if second < 0 or not data[first + 1:second].startswith(b"PCIe slot"):
+                raise RuntimeError("Unexpected device profiler CSV layout")
+            self.header = data[:second + 1]
+        start = max(start, len(self.header))  # the first case's slice begins after the header lines
+        CASES_DIR.mkdir(parents=True, exist_ok=True)
+        target = CASES_DIR / f"case-{case_id}-{self.pass_name}.csv"
+        target.write_bytes(self.header + data[start:])
+        shift = len(self.header) - start
+        rebased = [{"sample": item["sample"], "start_byte": max(item["start_byte"], start) + shift,
+                    "end_byte": item["end_byte"] + shift} for item in ranges]
+        return str(target), rebased
+
+
+def run_case(device, operation, item, pass_name, warmups, samples, capture):
+    """Correctness on the first invocation, then warmups and timed samples on the same tensors."""
+    case = Case(item["spec"])
+    started = time.perf_counter_ns()
+    tensors = []
+
+    def upload(tensor):
+        value = ttnn.from_torch(tensor, dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=device,
+                                memory_config=ttnn.DRAM_MEMORY_CONFIG)
+        tensors.append(value)
+        return value
+
     try:
-        device.enable_program_cache()
-
-        def upload(tensor):
-            return ttnn.from_torch(tensor, dtype=ttnn.float32, layout=ttnn.TILE_LAYOUT, device=device,
-                                   memory_config=ttnn.DRAM_MEMORY_CONFIG)
-
         inputs = [upload(case.padded[name]) for name in (("a", "b") if case.exercise == "vector-add" else ("x", "valid"))]
         out = upload(torch.zeros(case.device_shapes["out"]))
         ttnn.synchronize_device(device)
 
         def invoke():
-            result = operation(*inputs, out)
+            operation(*inputs, out)
             ttnn.synchronize_device(device)
-            return result
 
+        case_start_byte = capture.size() if capture else 0
         first_start = time.perf_counter_ns()
         invoke()
         first_call_ns = time.perf_counter_ns() - first_start
+        if capture:
+            capture.flush()  # export the first invocation separately from warmed samples
         first_values = case.crop(ttnn.to_torch(out).to(torch.float32))
         passed, correctness, text = case.check(first_values)
-        profile = {"schema_version": 1, "correctness": correctness, "first_call_including_jit_ns": first_call_ns,
+        profile = {"schema_version": 2, "correctness": correctness, "first_call_including_jit_ns": first_call_ns,
                    "exercise": case.exercise, "input_sha256": case.input_sha256,
                    # Bytes the operation must at least move: every padded input read once, the output written once.
                    "traffic": {"required_read_bytes": sum(t.numel() * 4 for t in case.padded.values()),
                                "required_write_bytes": math.prod(case.device_shapes["out"]) * 4}}
-        if os.getenv("TT_OJ_PROFILE_ONLY") == "1":
-            csv_path = Path(os.getenv("TT_METAL_PROFILER_DIR", "/tmp/generated/profiler")) / ".logs" / "profile_log_device.csv"
-            flush = lambda: ttnn.ReadDeviceProfiler(device)  # noqa: E731
-            flush()  # export the first invocation separately from warmed samples
-            for _ in range(5):
-                invoke()
-                flush()
-            ranges = []
-            for sample in range(1, 11):
-                before = csv_path.stat().st_size if csv_path.exists() else 0
-                invoke()
-                flush()  # exporting is outside the device kernel cycle interval
-                after = csv_path.stat().st_size if csv_path.exists() else 0
-                ranges.append({"sample": sample, "start_byte": before, "end_byte": after})
-            final_values = case.crop(ttnn.to_torch(out).to(torch.float32))
-            stable = bool(torch.equal(first_values, final_values))
-            profile.update({"timing_scope": "device_kernel_cycles", "instrumented": True, "repeatability_verified": stable,
-                "device_capture": {"warmup": 5, "sample_count": 10, "selection": "csv_append_byte_ranges",
-                    "sample_byte_ranges": ranges,
-                    "export_policy": "Profiler flushed after every invocation; export overhead excluded from kernel cycles but changes inter-sample spacing"}})
-            if not stable:
-                raise RuntimeError("Results changed during the instrumented device pass")
-        elif os.getenv("TT_OJ_COUNTERS_ONLY") == "1":
-            # Hardware performance counters: the runtime reads them after every compute kernel when
-            # TT_METAL_PROFILE_PERF_COUNTERS is set; the judge decodes the rows of the selected samples.
-            csv_path = Path(os.getenv("TT_METAL_PROFILER_DIR", "/tmp/generated/profiler")) / ".logs" / "profile_log_device.csv"
-            flush = lambda: ttnn.ReadDeviceProfiler(device)  # noqa: E731
-            flush()
-            for _ in range(2):
-                invoke()
-                flush()
-            ranges = []
-            for sample in range(1, 4):
-                before = csv_path.stat().st_size if csv_path.exists() else 0
-                invoke()
-                flush()
-                after = csv_path.stat().st_size if csv_path.exists() else 0
-                ranges.append({"sample": sample, "start_byte": before, "end_byte": after})
-            final_values = case.crop(ttnn.to_torch(out).to(torch.float32))
-            stable = bool(torch.equal(first_values, final_values))
-            profile.update({"timing_scope": "hardware_counters", "instrumented": True, "repeatability_verified": stable,
-                "counter_mask": os.getenv("TT_METAL_PROFILE_PERF_COUNTERS", ""),
-                "counter_capture": {"warmup": 2, "sample_count": 3, "selection": "csv_append_byte_ranges",
-                                    "sample_byte_ranges": ranges}})
-            if not stable:
-                raise RuntimeError("Results changed during the counter pass")
-        elif os.getenv("TT_OJ_BENCHMARK") == "1":
-            warmups = int(os.getenv("TT_OJ_WARMUP", "5"))
-            count = int(os.getenv("TT_OJ_SAMPLES", "50"))
-            if not 1 <= warmups <= 100 or not 5 <= count <= 1000:
-                raise ValueError("Invalid benchmark policy")
+        csv_file = None
+        if passed:  # a wrong result is never timed
             for _ in range(warmups):
                 invoke()
-            samples = []
+                if capture:
+                    capture.flush()
+            host_samples, ranges = [], []
             measurement_start_ns = time.perf_counter_ns()
-            for _ in range(count):
+            for sample in range(1, samples + 1):
+                before = capture.size() if capture else 0
                 start = time.perf_counter_ns()
                 invoke()
-                samples.append(time.perf_counter_ns() - start)
+                host_samples.append(time.perf_counter_ns() - start)
+                if capture:
+                    capture.flush()  # exporting is outside the timed call and outside the device kernel cycle interval
+                    ranges.append({"sample": sample, "start_byte": before, "end_byte": capture.size()})
             measurement_end_ns = time.perf_counter_ns()
             final_values = case.crop(ttnn.to_torch(out).to(torch.float32))
             stable = bool(torch.equal(first_values, final_values))
-            profile.update({"timing_scope": "host_submit_to_device_complete",
-                "scope_detail": "TT-Lang operation call on preallocated device tensors plus device synchronization; input upload, padding and output readback excluded",
-                "clock": "perf_counter", "clock_resolution_ns": round(time.get_clock_info("perf_counter").resolution * 1e9),
-                "warmup": warmups, "samples_ns": samples,
+            profile.update({
+                "warmup": warmups, "samples_ns": host_samples, "clock": "perf_counter",
+                "clock_resolution_ns": round(time.get_clock_info("perf_counter").resolution * 1e9),
                 "measurement_start_ns": measurement_start_ns, "measurement_end_ns": measurement_end_ns,
-                "repeatability_verified": stable,
-                "device_profiler": {"available": os.getenv("TT_OJ_DEVICE_PROFILER_SUPPORTED") == "1"}})
+                "repeatability_verified": stable, "instrumented": capture is not None,
+                "timing_scope": "host_submit_to_device_complete",
+                "scope_detail": "TT-Lang operation call on preallocated device tensors plus device synchronization, "
+                                "measured in the profiler-instrumented pass; input upload, padding, output readback "
+                                "and profiler export excluded",
+                "device_profiler": {"available": os.getenv("TT_OJ_DEVICE_PROFILER_SUPPORTED") == "1",
+                                    "enabled": capture is not None}})
+            if capture:
+                csv_file, rebased = capture.write_case(item["id"], case_start_byte, ranges)
+                selection = {"warmup": warmups, "sample_count": samples, "selection": "csv_append_byte_ranges",
+                             "sample_byte_ranges": rebased,
+                             "export_policy": "Profiler flushed after every invocation; export overhead excluded "
+                                              "from kernel cycles but changes inter-sample spacing"}
+                if pass_name == "counters":
+                    profile["counter_mask"] = os.getenv("TT_METAL_PROFILE_PERF_COUNTERS", "")
+                    profile["counter_capture"] = selection
+                else:
+                    profile["device_capture"] = selection
             if not stable:
-                raise RuntimeError("Results changed after repeated benchmark runs")
-        print(MARKER + json.dumps({"verdict": "pass"} if passed else {"verdict": "fail"}), flush=True)
-        print(DETAIL + text.replace("\n", " ")[:1000], flush=True)
-        print(PROFILE + json.dumps(profile, allow_nan=False), flush=True)
+                raise RuntimeError("Results changed between the first and the last invocation")
+        return {"id": item["id"], "result": {"verdict": "pass" if passed else "fail"},
+                "detail": text.replace("\n", " ")[:1000], "profile": profile, "csv": csv_file,
+                "wall_ns": time.perf_counter_ns() - started}
+    finally:
+        for tensor in tensors:
+            try:
+                ttnn.deallocate(tensor)
+            except Exception:  # noqa: BLE001 - best-effort release between testcases
+                pass
+
+
+def main():
+    data = json.load(sys.stdin)
+    legacy = "cases" not in data
+    if legacy:
+        # One case per process, selected by environment, as tools/ttlang_local_judge.py drives it.
+        if os.getenv("TT_OJ_PROFILE_ONLY") == "1":
+            recipe = ("profile", 5, 10)
+        elif os.getenv("TT_OJ_COUNTERS_ONLY") == "1":
+            recipe = ("counters", 2, 3)
+        else:
+            recipe = ("host", int(os.getenv("TT_OJ_WARMUP", "5")), int(os.getenv("TT_OJ_SAMPLES", "50")))
+        data = {"pass": recipe[0], "warmup": recipe[1], "samples": recipe[2], "cases": [{"id": 1, "spec": data}]}
+    pass_name = data.get("pass", "profile")
+    warmups, samples = data.get("warmup", 3), data.get("samples", 7)
+    items = data.get("cases")
+    if (pass_name not in PASSES or type(warmups) is not int or type(samples) is not int
+            or not 0 <= warmups <= 100 or not 1 <= samples <= 1000 or not isinstance(items, list) or not items
+            or any(not isinstance(item, dict) or type(item.get("id")) is not int or not isinstance(item.get("spec"), dict)
+                   for item in items)):
+        raise ValueError("Invalid measurement recipe")
+    exercise = items[0]["spec"].get("exercise")
+    if exercise not in EXERCISES:
+        raise ValueError(f"Unknown exercise {exercise!r}")
+    operation = load_submission(items[0]["spec"].get("entry") or EXERCISES[exercise])
+    device = ttnn.open_device(device_id=0)
+    try:
+        device.enable_program_cache()
+        capture = ProfilerCapture(device, pass_name) if pass_name != "host" else None
+        for item in items:
+            emit(CASE_START, {"id": item["id"]})
+            try:
+                payload = run_case(device, operation, item, pass_name, warmups, samples, capture)
+            except Exception:  # noqa: BLE001 - report the failing case, then stop: the device state is not trusted
+                if legacy:
+                    raise
+                emit(CASE_DONE, {"id": item["id"], "error": traceback.format_exc()[-4000:]})
+                break
+            emit(CASE_DONE, payload)
+            if legacy:
+                print(MARKER + json.dumps(payload["result"]), flush=True)
+                print(DETAIL + payload["detail"], flush=True)
+                print(PROFILE + json.dumps(payload["profile"], allow_nan=False), flush=True)
     finally:
         ttnn.close_device(device)
 

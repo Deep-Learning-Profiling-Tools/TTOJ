@@ -163,5 +163,14 @@ module.exports = async function bootstrap({ reseedProblems = false } = {}) {
       console.log(`Seeded ${manifest.id} (internal pid ${pid})`);
     }
   }
-  console.log(`Tenstorrent OJ bootstrap complete: ${seeded} problems.`);
+  // Problems listed in TT_OJ_HIDDEN_PROBLEMS stay invisible to students (hidden, never unhidden here).
+  const hiddenIds = (process.env.TT_OJ_HIDDEN_PROBLEMS || '').split(',').map((id) => id.trim()).filter(Boolean);
+  for (const id of hiddenIds) {
+    const doc = await problem.get('system', id);
+    if (doc && !doc.hidden) {
+      await problem.edit('system', doc.docId, { hidden: true });
+      console.log(`Hidden ${id} (TT_OJ_HIDDEN_PROBLEMS)`);
+    }
+  }
+  console.log(`Tenstorrent OJ bootstrap complete: ${seeded} problems, ${hiddenIds.length} hidden.`);
 };

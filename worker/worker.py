@@ -2,8 +2,10 @@
 
 The broker has Docker access. Submitted programs never receive the socket,
 credentials, expected outputs, host home directory, or a network connection.
-TT-Lang jobs each take one Blackhole chip, so up to four run in parallel; the
-ttnn/Metalium runtimes discover the whole mesh and take every chip.
+TT-Lang jobs each take one Blackhole chip from the pool in TT_OJ_CHIPS, so several run in
+parallel; the ttnn/Metalium runtimes discover the whole mesh and take every pooled chip.
+A TT-Lang submission uses two containers: one judges every testcase (correctness, host and
+device timing), a second reads the hardware counters of the accepted testcases.
 """
 import asyncio
 import contextlib
@@ -37,6 +39,9 @@ MARKER = "TT_OJ_RESULT:"
 PROFILE_MARKER = "TT_OJ_PROFILE:"
 DETAIL_MARKER = "TT_OJ_DETAIL:"
 OUTPUT_LIMIT = 256 * 1024
+# A batched TT-Lang container carries the compiler output of every testcase (about 120 KB per case for the
+# softmax reference, mostly profiler pragma notes), so its limit scales with the number of testcases.
+BATCH_OUTPUT_PER_CASE = 512 * 1024
 BASE_URL = os.environ.get("HYDRO_URL", "http://site:8888/").rstrip("/") + "/"
 JOBS = Path(os.environ.get("JOBS_DIR", "/jobs"))
 HOST_JOBS = Path(os.environ["JOBS_HOST_DIR"])
@@ -54,8 +59,23 @@ BENCHMARK_CPUSET = os.environ.get("BENCHMARK_CPUSET", "4-7,12-15")
 DEVICE_PROFILER_SUPPORTED = os.environ.get("TT_OJ_DEVICE_PROFILER_SUPPORTED") == "1"
 DEVICE_CSV_PATH = "/tmp/generated/profiler/.logs/profile_log_device.csv"
 DEVICE_ARTIFACT_LIMIT = 64 * 1024 * 1024  # a 110-core TT-Lang kernel writes ~7 MB per case
-CHIP_COUNT = int(os.environ.get("TT_OJ_CHIP_COUNT", "4"))
+
+
+def parse_chips(text):
+    chips = sorted({int(item) for item in text.split(",") if item.strip()})
+    if not chips or any(not 0 <= chip < 64 for chip in chips):
+        raise ValueError("TT_OJ_CHIPS must list /dev/tenstorrent indices, for example 0,1,2")
+    return chips
+
+
+# Chips the judge may use; the others stay free for interactive users of the machine.
+CHIPS = parse_chips(os.environ.get("TT_OJ_CHIPS", "0,1,2,3"))
+CHIP_COUNT = len(CHIPS)
 WORKER_CONCURRENCY = max(1, min(CHIP_COUNT, int(os.environ.get("TT_OJ_CONCURRENCY", str(CHIP_COUNT)))))
+CASE_START_MARKER = "TT_OJ_CASE_START:"
+CASE_DONE_MARKER = "TT_OJ_CASE:"
+CASES_DIR = "/tmp/tt-oj-cases"
+COMPILE_FAILURE = re.compile(r"TTLangCompileError|^error: ", re.M)
 # A container that sees a single chip is a "CUSTOM" cluster for tt-metal, which then requires an
 # explicit mesh graph descriptor; the wheel bundles this one-chip Blackhole (p150) descriptor.
 TTLANG_MESH_DESCRIPTOR = ("/opt/venv/lib/python3.12/site-packages/ttnn/tt_metal/fabric/"
@@ -64,8 +84,8 @@ TTLANG_MESH_DESCRIPTOR = ("/opt/venv/lib/python3.12/site-packages/ttnn/tt_metal/
 
 class ChipPool:
     """Hands out exclusive Tenstorrent chips to concurrent jobs."""
-    def __init__(self, count):
-        self.free = set(range(count))
+    def __init__(self, chips):
+        self.free = set(chips)
         self.condition = asyncio.Condition()
 
     async def acquire(self, count):
@@ -81,6 +101,16 @@ class ChipPool:
             self.condition.notify_all()
 
 
+def case_output_matches(result, expected_text, atol, rtol):
+    """None when the case has no reference, else whether the wrapper's result matches it."""
+    if expected_text is None:
+        return None
+    try:
+        return bool(compare_numbers(result, json.loads(expected_text), atol, rtol))
+    except (ValueError, TypeError):
+        return False
+
+
 def compare_numbers(actual, expected, atol=0, rtol=0):
     """Require matching shape and finite numeric values at every element."""
     if isinstance(expected, list):
@@ -94,9 +124,45 @@ def compare_numbers(actual, expected, atol=0, rtol=0):
     return actual == expected
 
 
+def batch_progress(stdout):
+    """Case ids that the TT-Lang wrapper has started (in order) and finished, from its stdout bytes."""
+    started, finished = [], set()
+    for line in bytes(stdout).splitlines():
+        for marker, bucket in ((CASE_START_MARKER, started), (CASE_DONE_MARKER, finished)):
+            if line.startswith(marker.encode()):
+                try:
+                    case_id = json.loads(line[len(marker):]).get("id")
+                except (ValueError, AttributeError):
+                    break
+                if type(case_id) is int:
+                    if isinstance(bucket, list):
+                        if case_id not in bucket:
+                            bucket.append(case_id)
+                    else:
+                        bucket.add(case_id)
+                break
+    return started, finished
+
+
+def batch_payloads(stdout, ids):
+    """Per-case payload lines of the TT-Lang wrapper; more than one line per case is tampering."""
+    payloads = {}
+    for line in stdout.splitlines():
+        if not line.startswith(CASE_DONE_MARKER):
+            continue
+        try:
+            value = json.loads(line[len(CASE_DONE_MARKER):])
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get("id") in ids:
+            payloads.setdefault(value["id"], []).append(value)
+    return payloads
+
+
 class Execution:
     """A container lifecycle that can be stopped on timeout/disconnect/shutdown."""
-    def __init__(self, client, container, profiling=False, attempt=None, case_id=None, pass_name=None):
+    def __init__(self, client, container, profiling=False, attempt=None, case_id=None, pass_name=None, artifact_cases=None,
+                 output_limit=OUTPUT_LIMIT):
         self.client = client
         self.container = container
         self.out = bytearray()
@@ -109,6 +175,11 @@ class Execution:
         self.attempt = attempt
         self.case_id = case_id
         self.pass_name = pass_name or ("device" if profiling else "host")
+        # Batched TT-Lang passes leave one CSV per testcase in CASES_DIR instead of one CSV per container.
+        self.artifact_cases = list(artifact_cases) if artifact_cases else None
+        self.output_limit = output_limit  # a batched container carries every testcase's output
+        self.expire_requested = False
+        self.salvaged = None
         self.reader = threading.Thread(target=self._read, daemon=True)
 
     def _read(self):
@@ -116,7 +187,7 @@ class Execution:
             for stdout, stderr in self.container.attach(stream=True, logs=True, demux=True):
                 for data, target in ((stdout, self.out), (stderr, self.err)):
                     if data:
-                        remaining = OUTPUT_LIMIT - len(self.out) - len(self.err)
+                        remaining = self.output_limit - len(self.out) - len(self.err)
                         target.extend(data[:max(0, remaining)])
                         if len(data) > remaining:
                             self.output_exceeded = True
@@ -137,10 +208,31 @@ class Execution:
         with contextlib.suppress(docker.errors.NotFound, docker.errors.APIError):
             self.container.remove(force=True)
 
-    def collect_profiler(self):
+    def expire(self):
+        """Ask the run loop to end the container with TLE (called from the event loop thread)."""
+        self.expire_requested = True
+
+    def collect_case_artifacts(self):
+        """Per-testcase CSVs written by the batched wrapper; paths are derived from the case ids, never from stdout."""
+        collected = {}
+        for case_id in self.artifact_cases:
+            text = self.collect_profiler(f"{CASES_DIR}/case-{case_id}-{self.pass_name}.csv")
+            if text is not None:
+                collected[case_id] = text
+        return collected
+
+    def salvage(self):
+        """Before killing a batched container, keep the CSVs of the testcases that already finished."""
+        if self.profiling and self.artifact_cases and self.salvaged is None:
+            try:
+                self.salvaged = self.collect_case_artifacts()
+            except docker.errors.DockerException:
+                self.salvaged = {}
+
+    def collect_profiler(self, path=DEVICE_CSV_PATH):
         """Read inside the live mount namespace; Docker archive misses tmpfs."""
         request = self.client.api.exec_create(self.container.id,
-            ["/usr/bin/head", "-c", str(DEVICE_ARTIFACT_LIMIT + 1), DEVICE_CSV_PATH],
+            ["/usr/bin/head", "-c", str(DEVICE_ARTIFACT_LIMIT + 1), path],
             stdout=True, stderr=True, user="1005:1005")
         payload, errors = bytearray(), bytearray()
         for stdout, stderr in self.client.api.exec_start(request["Id"], stream=True, demux=True):
@@ -172,15 +264,18 @@ class Execution:
         self.reader.start()
         status = None
         profiler_csv = None
+        profiler_csvs = None
         artifact_collected = False
+        last_snapshot = 0
         while True:
             elapsed = time.monotonic() - start
             if self.output_exceeded:
                 status = OLE
                 self.stop()
                 break
-            if elapsed > timeout:
+            if elapsed > timeout or self.expire_requested:
                 status = TLE
+                self.salvage()
                 self.stop()
                 break
             self.container.reload()
@@ -194,7 +289,9 @@ class Execution:
                         self.container.logs(stdout=True, stderr=False, tail=2))
                 if completed:
                     try:
-                        if int(completed.group(1)) == 0:
+                        if self.artifact_cases:
+                            profiler_csvs = self.collect_case_artifacts()
+                        elif int(completed.group(1)) == 0:
                             profiler_csv = self.collect_profiler()
                     finally:
                         self.acknowledge_profiler()
@@ -202,7 +299,9 @@ class Execution:
             try:
                 memory = self.container.stats(stream=False, one_shot=True).get("memory_stats", {}).get("usage", 0)
                 self.peak_memory = max(self.peak_memory, memory)
-                self.telemetry.append(telemetry_snapshot())
+                if time.monotonic() - last_snapshot >= 1:
+                    self.telemetry.append(telemetry_snapshot())
+                    last_snapshot = time.monotonic()
             except docker.errors.APIError:
                 pass
             time.sleep(0.15)
@@ -211,13 +310,18 @@ class Execution:
         state = self.container.attrs["State"]
         if state.get("OOMKilled"):
             status = MLE
-        # Recover any output emitted before the streaming attachment connected.
+        # Recover any output emitted before the streaming attachment connected. The json-file log is
+        # size-capped and rotated, so a long batch loses its head there: keep the longer capture.
         stdout = self.container.logs(stdout=True, stderr=False)
         stderr = self.container.logs(stdout=False, stderr=True)
-        if len(stdout) + len(stderr) > OUTPUT_LIMIT:
+        if len(stdout) + len(stderr) > self.output_limit:
             self.output_exceeded = True
-        self.out = bytearray(stdout[:OUTPUT_LIMIT])
-        self.err = bytearray(stderr[:max(0, OUTPUT_LIMIT - len(self.out))])
+        if len(stdout) < len(self.out):
+            stdout = bytes(self.out)
+        if len(stderr) < len(self.err):
+            stderr = bytes(self.err)
+        self.out = bytearray(stdout[:self.output_limit])
+        self.err = bytearray(stderr[:max(0, self.output_limit - len(self.out))])
         if status is None and state.get("ExitCode", 1):
             status = RE
         if status is None and self.output_exceeded:
@@ -238,6 +342,7 @@ class Execution:
             "exit_code": state.get("ExitCode"),
             "telemetry": self.telemetry,
             "profiler_csv": profiler_csv,
+            "profiler_csvs": profiler_csvs if profiler_csvs is not None else self.salvaged,
         }
 
 
@@ -247,7 +352,7 @@ class Judge:
         self.http = None
         self.ws = None
         self.jobs = {}
-        self.chips = ChipPool(CHIP_COUNT)
+        self.chips = ChipPool(CHIPS)
         self.send_lock = asyncio.Lock()
         self.shutting_down = False
         _, self.policy = load_policy()
@@ -308,8 +413,11 @@ class Judge:
                 await job
         self.jobs = {}
 
-    def prepare(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None, chips=None):
-        pass_name = "counters" if counters else "device" if profiling else "host"
+    def prepare(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None, chips=None, batch_cases=None):
+        if batch_cases:
+            pass_name = "counters" if counters else "profile" if profiling else "host"
+        else:
+            pass_name = "counters" if counters else "device" if profiling else "host"
         folder.mkdir(parents=True, exist_ok=True)
         mode = manifest["mode"]
         source_name = "submission.py" if mode in PYTHON_MODES else "solution.cpp"
@@ -318,7 +426,7 @@ class Judge:
         if mode in PYTHON_MODES:
             (folder / "runner.py").write_bytes(Path(f"/app/{mode}_runner.py").read_bytes())
         host_folder = HOST_JOBS / folder.relative_to(JOBS)
-        chips = list(chips if chips is not None else range(CHIP_COUNT))
+        chips = list(chips if chips is not None else CHIPS)
         single_chip = mode == "ttlang" and len(chips) == 1
         if single_chip:
             # The reserved chip is mapped to node 0, so the wrapper's device_id=0 opens exactly that chip.
@@ -374,7 +482,9 @@ class Judge:
             pids_limit=512, shm_size="128m",
             tmpfs={"/tmp": "rw,exec,size=2147483648,mode=1777"},
             ulimits=[Ulimit(name="nofile", soft=4096, hard=4096)],
-            log_config=LogConfig(type="json-file", config={"max-size": "1m", "max-file": "1"}),
+            # The cap must exceed the output limit (a batched TT-Lang container carries every testcase's
+            # compiler output), or the rotated log loses the first testcases' result lines.
+            log_config=LogConfig(type="json-file", config={"max-size": "32m", "max-file": "1"}),
             labels={"tt-oj.worker": "local", "tt-oj.record": task["rid"],
                     "tt-oj.attempt": attempt.id if attempt else "unknown"},
         )
@@ -388,7 +498,8 @@ class Judge:
                 with contextlib.suppress(docker.errors.NotFound, docker.errors.APIError):
                     container.remove(force=True)
                 raise
-        return Execution(self.docker, container, profiling=profiling, attempt=attempt, case_id=case_id, pass_name=pass_name)
+        return Execution(self.docker, container, profiling=profiling, attempt=attempt, case_id=case_id, pass_name=pass_name,
+                         artifact_cases=batch_cases, output_limit=BATCH_OUTPUT_PER_CASE * len(batch_cases) if batch_cases else OUTPUT_LIMIT)
 
     async def wait_for_hardware(self, rid, timeout=120):
         """Exclude known external Docker TT workloads and excessive heat.
@@ -418,9 +529,9 @@ class Judge:
             await self.send(rid, "next", message="等待硬件空闲或降温 / Waiting for idle hardware or cooldown.")
             await asyncio.sleep(2)
 
-    async def prepare_execution(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None, chips=None):
+    async def prepare_execution(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None, chips=None, batch_cases=None):
         # Cancellation must not abandon a still-running Docker create thread.
-        preparing = asyncio.create_task(asyncio.to_thread(self.prepare, folder, task, manifest, case, profiling, counters, attempt, chips))
+        preparing = asyncio.create_task(asyncio.to_thread(self.prepare, folder, task, manifest, case, profiling, counters, attempt, chips, batch_cases))
         try:
             return await asyncio.shield(preparing)
         except asyncio.CancelledError:
@@ -452,6 +563,243 @@ class Judge:
             finally:
                 await asyncio.to_thread(execution.remove)
 
+    async def run_batch(self, rid, task, manifest, attempt, chips, pass_name, items, per_case_timeout, progress=None):
+        """Run one container over several TT-Lang testcases.
+
+        Returns the container outcome, the case ids the wrapper started (in order) and the payload
+        lines it printed, keyed by case id. A testcase still running per_case_timeout seconds after
+        its start marker ends the container with TLE; the CSVs of finished cases are kept.
+        """
+        ids = [item["id"] for item in items]
+        recipe = self.policy["counters" if pass_name == "counters" else "device"]
+        batch = {"pass": pass_name, "warmup": recipe["warmup_count"], "samples": recipe["sample_count"], "cases": items}
+        attempt.event("pass_prepare_started", case_id=0, pass_name=pass_name, case_ids=ids)
+        execution = await self.prepare_execution(attempt.private / f"0-{pass_name}", task, manifest,
+            {"input": json.dumps(batch), "output": None}, profiling=pass_name != "host",
+            counters=pass_name == "counters", attempt=attempt, chips=chips, batch_cases=ids)
+        running = asyncio.create_task(self.run_execution(execution, per_case_timeout * len(ids)))
+        first_seen, completed, loop_started = {}, set(), time.monotonic()
+        try:
+            while True:
+                done, _ = await asyncio.wait({running}, timeout=1.0)
+                if done:
+                    break
+                started, finished = batch_progress(execution.out)
+                for case_id in started:
+                    first_seen.setdefault(case_id, time.monotonic())
+                if finished - completed:
+                    completed |= finished
+                    if progress:
+                        await progress(len(completed & set(ids)), len(ids))
+                current = started[-1] if started else None
+                if current not in finished and not execution.expire_requested:
+                    if time.monotonic() - first_seen.get(current, loop_started) > per_case_timeout:
+                        attempt.event("case_timeout", case_id=current, pass_name=pass_name, limit_s=per_case_timeout)
+                        execution.expire()
+        except asyncio.CancelledError:
+            running.cancel()
+            with contextlib.suppress(BaseException):
+                await running
+            raise
+        outcome = await running
+        started, _ = batch_progress(outcome["stdout"].encode("utf-8", "replace"))
+        attempt.event("pass_completed", case_id=0, pass_name=pass_name, status=outcome["status"],
+                      started_case_ids=started, wall_time_ms=outcome["time"])
+        return outcome, started, batch_payloads(outcome["stdout"], set(ids))
+
+    async def judge_ttlang(self, rid, task, manifest, cases, timeout, attempt, chips):
+        """Judge a TT-Lang submission: every testcase in one container, then counters in a second."""
+        report = attempt.report
+        report["execution_limits"].update({"per_case_wall_timeout_s": timeout, "batch_wall_timeout_s": timeout * len(cases),
+                                           "output_capture_bytes": BATCH_OUTPUT_PER_CASE * len(cases),
+                                           "pass_structure": "profile_batch_then_counters_batch"})
+        report["passes"] = {}
+        atol, rtol = manifest.get("atol", 0), manifest.get("rtol", 0)
+        items, profile_cases = [], {}
+        for index, case in enumerate(cases, 1):
+            try:
+                spec = json.loads(case["input"])
+            except ValueError as error:
+                raise ValueError(f"TT-Lang testcase {index} input is not JSON: {error}")
+            if not isinstance(spec, dict):
+                raise ValueError(f"TT-Lang testcase {index} input must be a JSON object")
+            items.append({"id": index, "spec": spec})
+            profile_cases[index] = {"id": index, "state": "queued", "status": None,
+                "correctness": {"reference_available": case["output"] is not None,
+                    "input_sha256": sha256(case["input"].encode()),
+                    "expected_output_sha256": sha256(case["output"].encode()) if case["output"] is not None else None,
+                    "atol": atol, "rtol": rtol, "host_comparison": "not_run", "device_comparison": "not_run",
+                    "repeat_check_scope": "first_and_final_not_every_invocation"},
+                "host": {"available": False, "reason": "not_run"}, "device": {"available": False, "reason": "not_run"},
+                "counters": {"available": False, "reason": "not_run"}, "telemetry_ref": None}
+            report["cases"].append(profile_cases[index])
+        attempt.checkpoint()
+        pass_name = "profile" if DEVICE_PROFILER_SUPPORTED else "host"
+        await self.send(rid, "next", status=20, progress=0,
+                        message=f"Running {len(cases)} testcases on one chip: correctness, host and device timing.")
+
+        async def profile_progress(completed, total):
+            await self.send(rid, "next", status=20, progress=round(completed * 90 / total),
+                            message=f"Testcase {completed} / {total} finished.")
+
+        batch_started = datetime.now(timezone.utc).isoformat()
+        outcome, started, payloads = await self.run_batch(rid, task, manifest, attempt, chips, pass_name, items, timeout, profile_progress)
+        report["passes"][pass_name] = {"case_ids": [item["id"] for item in items], "status": outcome["status"],
+            "exit_code": outcome.get("exit_code"), "wall_time_ms": outcome["time"], "memory_kib": outcome["memory"],
+            "started_case_ids": started, "telemetry": outcome.get("telemetry", []), "started_at": batch_started}
+        csvs = outcome.get("profiler_csvs") or {}
+        full_log = outcome["stderr"] + "\n" + outcome["stdout"]
+        results, final_status, score = [], AC, 0
+        for index, case in enumerate(cases, 1):
+            profile_case = profile_cases[index]
+            lines = payloads.get(index, [])
+            payload = lines[0] if len(lines) == 1 and isinstance(lines[0], dict) else None
+            status, message, comparison = None, "", "not_run"
+            profile = payload.get("profile") if payload and isinstance(payload.get("profile"), dict) else {}
+            if payload is not None and "error" not in payload:
+                result = payload.get("result")
+                try:
+                    encoded = json.dumps(result)
+                except (TypeError, ValueError):
+                    encoded = None
+                if encoded is None:
+                    status, message, comparison = RE, "Invalid result format.", "invalid_result_format"
+                elif case["output"] is None:
+                    status, message, comparison = AC, "Self-test output: " + encoded[:2000], "self_test_no_reference"
+                else:
+                    matches = compare_numbers(result, json.loads(case["output"]), atol, rtol)
+                    status = AC if matches else WA
+                    message = "All elements passed validation." if matches else "Output values or tensor shape differ from the reference."
+                    comparison = "pass" if matches else "fail"
+                if encoded is not None:
+                    profile_case["correctness"]["actual_output_sha256"] = sha256(encoded.encode())
+                if status in (AC, WA) and isinstance(payload.get("detail"), str):
+                    message += " " + payload["detail"][:1000]
+            elif payload is not None:
+                error_text = str(payload.get("error", ""))[-4000:]
+                status = CE if COMPILE_FAILURE.search(error_text) else RE
+                message, comparison = error_text, "wrapper_exception"
+                if status == CE:
+                    await self.send(rid, "next", compilerText=error_text[-10000:])
+            elif len(lines) > 1:
+                status, message, comparison = RE, "Program produced more than one result for this testcase.", "duplicate_result_marker"
+            elif index in started or (index == 1 and not started):
+                # The container ended while this testcase was running (or before the first one started).
+                status = outcome["status"] or RE
+                if status == TLE:
+                    message = f"Exceeded the {timeout:g}s per-testcase wall limit including JIT; container terminated."
+                elif status == MLE:
+                    message = "Exceeded the 8 GiB host memory limit."
+                elif status == OLE:
+                    message = f"stdout/stderr exceeded {BATCH_OUTPUT_PER_CASE * len(cases) // 1024} KiB over the whole submission (compiler output included)."
+                else:
+                    status = CE if COMPILE_FAILURE.search(full_log) else RE
+                    message = full_log[-4000:]
+                    if status == CE:
+                        await self.send(rid, "next", compilerText=full_log[-10000:])
+                comparison = "no_result_marker"
+            else:
+                break  # an earlier testcase ended the run; this one was never started
+            profile_case["correctness"]["host_comparison"] = comparison
+            wall_ns = payload.get("wall_ns") if payload else None
+            wall_ms = round(wall_ns / 1e6, 2) if type(wall_ns) in (int, float) and math.isfinite(wall_ns) and wall_ns >= 0 else outcome["time"]
+            host_profile = summarize_profile(profile) if status == AC else {"available": False, "reason": "not_timed_non_accepted_case"}
+            profile_case["correctness"]["host_repeatability_verified"] = host_profile.get("repeatability_verified")
+            if status != AC:
+                device_profile = {"available": False, "reason": "skipped_non_accepted_case"}
+            elif pass_name != "profile":
+                device_profile = {"available": False, "reason": "profiler_enabled_sdk_required"}
+            elif csvs.get(index):
+                csv_text = csvs[index]
+                filename = attempt.write_csv(index, csv_text)
+                try:
+                    device_profile = parse_device_profile(csv_text, capture=profile.get("device_capture"))
+                    for block in ("traffic", "correctness"):
+                        if isinstance(profile.get(block), dict):
+                            device_profile[block] = numeric_block(profile[block])
+                except (ValueError, TypeError, KeyError) as error:
+                    device_profile = {"available": False, "valid": False, "reason": str(error)}
+                device_profile.update({"artifacts": [filename], "artifact_sha256": sha256(csv_text.encode()), "instrumented": True,
+                                       "same_run_as_correctness": True})
+                # Correctness, host samples and device cycles come from one run of the same tensors.
+                profile_case["correctness"]["device_comparison"] = comparison
+                profile_case["correctness"]["device_repeatability_verified"] = host_profile.get("repeatability_verified")
+            else:
+                device_profile = {"available": False, "valid": False, "reason": "device_csv_not_collected", "diagnostic_status": outcome["status"]}
+            result = {"id": index, "subtaskId": 1, "status": status, "score": 100 / len(cases) if status == AC else 0,
+                      "time": wall_ms, "memory": outcome["memory"], "message": message}
+            if host_profile.get("available"):
+                result["message"] += f" Host synchronized median: {host_profile['statistics']['median_ns'] / 1000:.3f} μs ({host_profile['sample_count']} samples)."
+            recipe = self.policy["device"]
+            host_recipe_matches = not host_profile.get("available") or (host_profile.get("warmup_count") == recipe["warmup_count"] and host_profile.get("sample_count") == recipe["sample_count"])
+            capture = device_profile.get("capture", {}) if isinstance(device_profile.get("capture"), dict) else {}
+            device_recipe_matches = not device_profile.get("available") or (capture.get("warmup") == recipe["warmup_count"] and capture.get("sample_count") == recipe["sample_count"])
+            profile_case.update({"state": "running", "status": status, "wall_time_ms": wall_ms, "host": host_profile, "device": device_profile,
+                "telemetry_ref": pass_name, "runtime_affinity_warning": "Unable to bind" in full_log,
+                "policy_validation": {"matches": host_recipe_matches and device_recipe_matches,
+                    "host_recipe_matches": host_recipe_matches, "device_recipe_matches": device_recipe_matches,
+                    "note": "Observed metadata only; submitted Python shares the wrapper process and is not tamper-attested"}})
+            attempt.event("case_completed", case_id=index, status=status, comparison=comparison)
+            results.append(result)
+            score += result["score"]
+            if status != AC:
+                final_status = status
+            await self.send(rid, "next", case=result, progress=round(90 + index * 5 / len(cases)))
+            if status in (CE, TLE, MLE, OLE, RE):
+                break
+        attempt.checkpoint()
+        accepted = [item for item in items if profile_cases[item["id"]]["status"] == AC]
+        counters = {}
+        counters_outcome = None
+        if accepted and DEVICE_PROFILER_SUPPORTED:
+            await self.send(rid, "next", status=20, progress=95,
+                            message=f"Reading hardware performance counters for {len(accepted)} accepted testcases.")
+            counters_started = datetime.now(timezone.utc).isoformat()
+            counters_outcome, counters_started_ids, counters = await self.run_batch(rid, task, manifest, attempt, chips, "counters", accepted, timeout)
+            report["passes"]["counters"] = {"case_ids": [item["id"] for item in accepted], "status": counters_outcome["status"],
+                "exit_code": counters_outcome.get("exit_code"), "wall_time_ms": counters_outcome["time"], "memory_kib": counters_outcome["memory"],
+                "started_case_ids": counters_started_ids, "telemetry": counters_outcome.get("telemetry", []), "started_at": counters_started}
+        counter_csvs = (counters_outcome or {}).get("profiler_csvs") or {}
+        for item in items:
+            index = item["id"]
+            profile_case = profile_cases[index]
+            if profile_case["state"] == "queued":
+                profile_case.update({"state": "not_run", "reason": "earlier_testcase_ended_the_run"})
+                continue
+            if profile_case["status"] != AC:
+                counters_profile = {"available": False, "reason": "skipped_non_accepted_case"}
+            elif not DEVICE_PROFILER_SUPPORTED:
+                counters_profile = {"available": False, "reason": "not_collected"}
+            else:
+                lines = counters.get(index, [])
+                payload = lines[0] if len(lines) == 1 and isinstance(lines[0], dict) else None
+                csv_text = counter_csvs.get(index)
+                if payload and "error" not in payload and csv_text:
+                    filename = attempt.write_csv(index, csv_text, kind="counters")
+                    profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+                    try:
+                        if case_output_matches(payload.get("result"), cases[index - 1]["output"], atol, rtol) is False:
+                            raise ValueError("Counter pass result failed correctness validation")
+                        parsed = parse_perf_counters(csv_text, COUNTER_MASK, capture=profile.get("counter_capture"))
+                        counters_profile = {key: parsed.get(key) for key in ("available", "valid", "mask", "groups", "clock_mhz", "cores",
+                                                                             "windows_decoded", "window_us_median", "counters", "errors", "notes")}
+                        counters_profile["summary"] = summarize_counters(parsed)
+                        counters_profile["capture"] = profile.get("counter_capture")
+                    except (ValueError, TypeError, KeyError) as error:
+                        counters_profile = {"available": False, "valid": False, "reason": str(error)}
+                    counters_profile["artifacts"] = [filename]
+                else:
+                    counters_profile = {"available": False, "valid": False, "reason": "counter_pass_failed_or_no_csv",
+                                        "diagnostic_status": (counters_outcome or {}).get("status")}
+                    if payload and isinstance(payload.get("error"), str):
+                        counters_profile["error_tail"] = payload["error"][-1000:]
+            profile_case["counters"] = counters_profile
+            profile_case.update({"state": "terminal", "finished_at": datetime.now(timezone.utc).isoformat()})
+        report["quality"] = quality_report(report["cases"])
+        report["environment"]["after"] = telemetry_snapshot()
+        attempt.checkpoint()
+        return results, final_status, score
+
     async def judge(self, task):
         rid = str(task.get("rid", ""))
         if not re.fullmatch(r"[0-9a-fA-F]{24}", rid):
@@ -482,7 +830,7 @@ class Judge:
             attempt = Attempt(JOBS, PROFILES, task)
             report = attempt.report
             report["scheduler"] = {"concurrency": WORKER_CONCURRENCY, "reservation": None, "device_ids": None,
-                "discovered_devices": list(range(CHIP_COUNT)), "cpu_affinity": BENCHMARK_CPUSET,
+                "pool_device_ids": list(CHIPS), "discovered_devices": list(CHIPS), "cpu_affinity": BENCHMARK_CPUSET,
                 "cpu_quota": None, "queue_priority": task.get("priority"),
                 "queue_policy": "Hydro priority queue", "external_contention_verified": False}
             code_paths = [Path(__file__), Path(__file__).with_name("metrics.py"), Path(__file__).with_name("device_profile.py"),
@@ -561,7 +909,11 @@ class Judge:
                 "output_capture_bytes": OUTPUT_LIMIT, "device_csv_bytes": DEVICE_ARTIFACT_LIMIT}
             attempt.checkpoint()
             results, final_status, score = [], AC, 0
-            for index, case in enumerate(cases, 1):
+            if mode == "ttlang":
+                # One container judges every testcase, a second reads the counters; the per-case
+                # loop below is for the ttnn/Metalium modes, which run one container per pass.
+                results, final_status, score = await self.judge_ttlang(rid, task, manifest, cases, timeout, attempt, chips)
+            for index, case in enumerate([] if mode == "ttlang" else cases, 1):
                 case_started = time.monotonic_ns()
                 profile_case = {"id": index, "state": "running", "status": None,
                     "correctness": {"reference_available": case["output"] is not None,
@@ -737,7 +1089,10 @@ class Judge:
                     break
             final = {"score": round(score, 2), "time": round(sum(r["time"] for r in results), 2),
                      "memory": max(r["memory"] for r in results),
-                     "message": "Time sums per-case container wall time including TT initialization/JIT/transfers. Memory is sampled host memory, excluding device memory."}
+                     "message": ("Time sums per-testcase wall time inside the shared container, including JIT and transfers "
+                                 "but not container start or device initialization. Memory is sampled host memory, excluding device memory."
+                                 if mode == "ttlang" else
+                                 "Time sums per-case container wall time including TT initialization/JIT/transfers. Memory is sampled host memory, excluding device memory.")}
             attempt.write_private("hydro-cases.json", (json.dumps(results, ensure_ascii=False, indent=2) + "\n").encode())
             await end(final_status, "evaluation_completed", **final)
             log.info("Finished record=%s attempt=%s status=%s score=%s", rid, attempt.id, final_status, round(score, 2))
@@ -782,7 +1137,7 @@ class Judge:
                 self.ws = ws
                 await ws.send_json({"key": "config", "lang": list(LANGS), "concurrency": WORKER_CONCURRENCY, "type": ["judge"]})
                 await ws.send_json({"key": "start"})
-                log.info("Connected to Hydro; %s chips, concurrency %s", CHIP_COUNT, WORKER_CONCURRENCY)
+                log.info("Connected to Hydro; chips %s, concurrency %s", CHIPS, WORKER_CONCURRENCY)
                 (JOBS / "worker-status.json").write_text(json.dumps({"connected": True, "host": socket.gethostname(), "languages": LANGS}))
                 async for message in ws:
                     if message.type == aiohttp.WSMsgType.TEXT:
