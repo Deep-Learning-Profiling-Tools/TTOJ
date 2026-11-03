@@ -19,7 +19,7 @@ import uuid
 
 
 POLICY_PATH = Path(__file__).with_name("evaluation-policy.json")
-POLICY_SHA256 = "429717d46515f57149cfc53645d17b43403877379feed1a02365f9286b52e0cf"
+POLICY_SHA256 = "957d288181743c5e8103758b753ac0a35d946ba4d2e69fca27b10b932501a0b3"
 STATUS_NAMES = {1: "AC", 2: "WA", 3: "TLE", 4: "MLE", 5: "OLE", 6: "RE", 7: "CE", 8: "SE"}
 
 
@@ -118,7 +118,7 @@ class Attempt:
                         "reason_codes": self.policy["ranking_blockers"] + ["attempt_not_finalized"],
                         "warnings": [], "purpose": self.policy["purpose"]},
             "data_recording": {"private_archive": "source, manifest, task identity, lifecycle events and raw process output",
-                               "public_artifacts": "report.json and case-N-device.csv only",
+                               "public_artifacts": "report.json, case-N-device.csv and case-N-counters.csv only",
                                "integrity": "SHA-256 inventory; operator-writable, not signed or write-once",
                                "retention": "indefinite_until_manual_administrator_removal"},
         }
@@ -163,10 +163,10 @@ class Attempt:
             except (OSError, ValueError):
                 pass
             if latest_id != self.id:
-                for stale in self.latest.glob("case-*-device.csv"):
+                for stale in self.latest.glob("case-*-*.csv"):
                     stale.unlink()
             atomic_write(self.latest / "report.json", data, 0o644)
-            for artifact in self.public.glob("case-*-device.csv"):
+            for artifact in self.public.glob("case-*-*.csv"):
                 atomic_write(self.latest / artifact.name, artifact.read_bytes(), 0o644)
             atomic_write(self.latest / "latest.json", json_bytes({"schema_version": 2,
                 "attempt_id": self.id, "record_id": self.rid, "state": self.report["lifecycle"]["state"]}), 0o644)
@@ -186,8 +186,8 @@ class Attempt:
         self.event("manifest_loaded", sha256=digest(raw), test_count=len(tests) if isinstance(tests, list) else None)
         self.checkpoint()
 
-    def write_csv(self, case_id: int, csv_text: str):
-        name = f"case-{case_id}-device.csv"
+    def write_csv(self, case_id: int, csv_text: str, kind: str = "device"):
+        name = f"case-{case_id}-{kind}.csv"
         raw = csv_text.encode()
         self.write_private(name, raw)
         atomic_write(self.public / name, raw, 0o644)
@@ -202,7 +202,7 @@ class Attempt:
             metadata = {"case_id": case_id, "pass": pass_name,
                 "container_id": execution.container.id,
                 "output_truncated": bool(execution.output_exceeded),
-                "output_limit_bytes": 262144, "peak_host_memory_bytes": execution.peak_memory,
+                "output_limit_bytes": getattr(execution, "output_limit", 262144), "peak_host_memory_bytes": execution.peak_memory,
                 "reader_error": execution.thread_error}
             if outcome:
                 metadata.update({key: outcome.get(key) for key in ("status", "time", "memory", "exit_code", "telemetry")})

@@ -51,9 +51,12 @@ services:
       PROFILES_DIR: /profiles
       BENCHMARK_CPUSET: "${BENCHMARK_CPUSET:-4-7,12-15}"
       TT_OJ_DEVICE_PROFILER_SUPPORTED: "1"
+      # /dev/tenstorrent indices the judge may use; the others stay free for interactive users.
+      TT_OJ_CHIPS: "${TT_OJ_CHIPS:-0,1,2}"
       JOBS_HOST_DIR: "${JOBS_HOST_DIR:-${PWD}/data/jobs}"
       TTNN_IMAGE: "${TTNN_IMAGE:-tt-oj-profiler-runtime:0.79.0}"
       METALIUM_IMAGE: "${METALIUM_IMAGE:-tt-oj-metalium-profiler:0.79.0}"
+      TTLANG_IMAGE: "${TTLANG_IMAGE:-tt-oj-ttlang-runtime:1.1.10}"
     depends_on:
       site:
         condition: service_healthy
@@ -70,6 +73,28 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+  backup:
+    # Scheduled backups of MongoDB, ./data/profiles and the private job reports.
+    # See docs/backups.md; tools/backup.sh and tools/restore.sh wrap the manual operations.
+    image: mongo:7-jammy
+    cpuset: "${SERVICE_CPUSET:-0-3,8-11}"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 2m
+    environment:
+      BACKUP_RUN_ON_START: "${BACKUP_RUN_ON_START:-0}"
+      BACKUP_INTERVAL_HOURS: "${BACKUP_INTERVAL_HOURS:-24}"
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-14}"
+    command: ["bash", "/tools/backup-loop.sh"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./data/backups:/backups
+      - ./data/profiles:/profiles:ro
+      - ./data/jobs:/jobs:ro
+      - ./tools/backup-loop.sh:/tools/backup-loop.sh:ro
+      - ./tools/backup-once.sh:/tools/backup-once.sh:ro
 volumes:
   mongo-data:
   hydro-config:

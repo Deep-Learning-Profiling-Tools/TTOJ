@@ -24,13 +24,64 @@ or lifecycle events are not reconstructed retrospectively.
 
 | Measurement | Recipe | Included | Excluded |
 | --- | --- | --- | --- |
-| Host synchronized call | Fresh container per case; first correctness/JIT invocation, 5 warmups, 50 timed repeats; profiler disabled | TTNN `solve(a,b)` followed by device synchronization, including allocations inside `solve`; Metalium `EnqueueMeshWorkload` followed by `distributed::Finish` | Container startup, device initialization, first-call JIT, input upload and output download |
-| Device kernel cycles | Separate fresh container per accepted case; profiler enabled; first invocation, 5 warmups, 10 selected repeats | Official firmware kernel zones, grouped by device/core/RISC and ordered stage occurrence; same-core envelopes | Initial invocation and warmup events are excluded from selected statistics; profiler flush/export is outside kernel cycle intervals |
+| Host synchronized call | ttnn/Metalium: fresh container per case; first correctness/JIT invocation, 5 warmups, 50 timed repeats; profiler disabled. TT-Lang: one container for all cases, profiler enabled; 3 warmups, 7 timed repeats around the invocations whose device cycles are captured | TTNN `solve(a,b)` followed by device synchronization, including allocations inside `solve`; Metalium `EnqueueMeshWorkload` followed by `distributed::Finish` | Container startup, device initialization, first-call JIT, input upload and output download |
+| Device kernel cycles | ttnn/Metalium: separate fresh container per accepted case; profiler enabled; first invocation, 5 warmups, 10 selected repeats. TT-Lang: the same run as correctness and host timing; first invocation, 3 warmups, 7 selected repeats | Official firmware kernel zones, grouped by device/core/RISC and ordered stage occurrence; same-core envelopes | Initial invocation and warmup events are excluded from selected statistics; profiler flush/export is outside kernel cycle intervals |
 
-Both passes warm the program cache in their own process. There is **no explicit
+For the CS540 TT-Lang problems (`ttlang` mode) both recipes apply unchanged to the
+submitted `@ttl.operation` call: the host pass times `operation(inputs..., out)` plus
+device synchronization on preallocated FP32 tile tensors (padding, upload and readback
+excluded). From the device pass the site derives the **device time** of each case:
+per selected sample, first kernel start to last kernel end over all cores and RISCs
+(tt-metal's DEVICE KERNEL DURATION definition), median over the ten samples. NoC event
+tracing is left off because it logs every transfer and perturbs kernel time. The
+`/leaderboard` page ranks each account's fastest accepted submission by the geometric
+mean of device time over the testcases; host timings and wall time are never ranked.
+Cross-core spans assume the per-core cycle counters are aligned; tt-metal documents
+minor skew between cores.
+
+For TT-Lang, a second container (1 warmup, 3 selected samples per accepted case) runs with
+`TT_METAL_PROFILE_PERF_COUNTERS=39` (FPU, PACK, UNPACK and INSTRN groups). The
+runtime reads the Tensix counters on every core after each compute kernel and
+appends one `TS_DATA` row per counter to the device CSV; `worker/perf_counters.py`
+decodes them by position (group order of the mask, table order of the bundled
+`hw_counters.h`), divides by the counter window and averages over cores and
+samples. The report stores `cases[].counters` (all counters, per-unit busy
+fractions, per-thread stall fractions and reasons); the raw CSV is published as
+`case-N-counters.csv`. Counter values describe the compute kernel window of each
+core, not the ranked device time. Correctness is checked inside
+the wrapper against a PyTorch reference with the manifest's `tolerance`
+(`|got - want| <= atol + rtol * scale`); the broker only compares the verdict marker.
+The wrapper's one-line correctness detail (mismatch count, max error) is appended to
+the case message, and numeric correctness fields are copied into the public report.
+
+Each pass warms the program cache in its own process. There is **no explicit
 L1 or DRAM cache flush**. Separate passes can have different thermal, cache and
 scheduling conditions. Profiling changes the workload and inter-sample spacing;
-never merge instrumented device latency into uninstrumented host samples.
+TT-Lang host samples are taken with the profiler enabled and therefore include
+its overhead (profiler export itself happens outside the timed call).
+
+### TT-Lang: two containers per submission
+
+Since round 4 a TT-Lang submission is judged in two containers, not three per
+testcase. The `profile` container opens the chip once and, for every testcase in
+order, uploads the inputs, runs the operation once (correctness against the
+PyTorch reference, first-call latency including JIT), then 3 warmups and 7 timed
+samples whose device cycles are captured by byte range from the profiler CSV. A
+wrong result is never timed; the batch stops at the first case that raises,
+because the device state is not trusted afterwards. The wrapper writes one CSV
+per case (`/tmp/tt-oj-cases/case-N-profile.csv`: the two header lines plus that
+case's rows, byte ranges rebased), which the broker collects before the
+container exits, so `case-N-device.csv` and its parser are unchanged. The
+`counters` container repeats this for the accepted cases only with
+`TT_METAL_PROFILE_PERF_COUNTERS` (1 warmup, 3 samples); the counters are
+compiled into the kernels, so they cannot share a process with the ranked
+timing. The output limit is 512 KiB per testcase for the whole container (the kernel
+compiler's notes alone are about 120 KB per softmax testcase). Per-case wall limits apply inside the batch: the broker watches the
+`TT_OJ_CASE_START` markers and ends the container with TLE when a case runs
+longer than the limit; CSVs of finished cases are salvaged first. Container
+start, `import ttnn` and device initialisation (about 6 s) are therefore paid
+twice per submission instead of thirty times.
+
 
 Raw host values are stored in nanoseconds. Device CSVs retain raw counter cycles;
 the parser derives nanoseconds as `cycles * 1000 / recorded_MHz`. Recorded MHz is
@@ -76,10 +127,26 @@ has been established; the platform currently assumes trusted account holders.
 
 ## Scheduling and environment provenance
 
-The worker requests `concurrency: 1` from Hydro and holds a process-lifetime
-advisory `flock` for the whole mesh. Cases and diagnostic passes run sequentially.
-Tasks currently use device 0, while topology discovery receives device nodes
-0–3. This does not provide four independent device workers.
+The host has four Blackhole chips (`/dev/tenstorrent/0-3`, two p300 boards).
+`TT_OJ_CHIPS` (default `0,1,2`) lists the chips the judge may use; chip 3 is
+left to interactive users of the machine, always the same one. The worker
+requests `concurrency: <pool size>` from Hydro and keeps a chip pool: a
+TT-Lang job takes one free chip for its whole lifetime, so up to three
+submissions are judged at the same time, each on its own chip; the ttnn and
+Metalium runtimes discover the whole mesh and therefore take every pooled chip
+and run alone (they need `TT_OJ_CHIPS=0,1,2,3` to see a supported topology). Inside a TT-Lang container the reserved chip is mapped to
+`/dev/tenstorrent/0` and `TT_MESH_GRAPH_DESC_PATH` names the bundled one-chip
+(p150) mesh descriptor, because tt-metal treats a lone chip as a "CUSTOM"
+cluster and refuses to start without one. Within a job, the testcases and the two
+containers still run sequentially. The report's `scheduler.device_ids` records the
+chip; chips share the host CPU set and PCIe root, which can perturb host-side
+timings but not the on-device kernel cycles that are ranked. A process-lifetime
+advisory `flock` still prevents two workers from starting on one host.
+
+If the site process restarts while jobs are running, the Hydro task documents of
+those jobs are lost and the records stay "Judging"; rejudge them (record page,
+"Rejudge"). A worker restart or a dropped judge websocket is handled: Hydro
+re-queues the in-flight tasks and they are judged again from the start.
 
 Preflight excludes known external Docker containers exposing Tenstorrent devices
 and waits if a recorded Blackhole temperature reaches 85 °C, for at most 120 s.
@@ -101,7 +168,7 @@ capabilities and cannot access the Docker socket. The per-case bind mount has
 only the submitted source, current input and the required Python wrapper, with
 no expected outputs. Limits are 8 GiB host memory, no extra swap, 512 processes,
 2 GiB writable `/tmp`, combined stdout/stderr capture of 256 KiB, and device CSV
-capture of 16 MiB. Each pass's wall timeout includes all initialization, JIT and
+capture of 64 MiB. Each pass's wall timeout includes all initialization, JIT and
 transfers and is capped at 180 s.
 
 ## Attempt identity and lifecycle
@@ -149,7 +216,8 @@ data/jobs/<record_id>/attempts/<attempt_id>/     restricted archive
   manifest.json                               exact fetched bytes; includes references
   events.jsonl                                broker lifecycle
   case-N-host.stdout / .stderr / .json         bounded raw bytes and execution metadata
-  case-N-device.stdout / .stderr / .json       separate pass, when executed
+  case-N-device.stdout / .stderr / .json       separate pass, when executed (ttnn/Metalium)
+  case-0-profile.* / case-0-counters.*         TT-Lang batch containers (all cases)
   N/ and N-device/                            per-pass bind mount contents
   case-N-device.csv                           raw profiler CSV, when captured
   terminal-details.json / hydro-cases.json     full judge diagnostics, when produced
@@ -178,6 +246,18 @@ stdout/stderr, compiler text and arbitrary infrastructure error messages. Full
 diagnostics stay in the restricted archive and normal judge permission flow.
 These profile downloads are not automatically a publicly licensed research
 dataset. Raw profiler CSVs may contain source paths or user zone metadata.
+
+On the site, a record's details are visible to its **owner or staff** only. A
+viewer is owner-or-staff when `user._id === rdoc.uid` or the account holds
+`PRIV_READ_RECORD_CODE` (the super admin and the instructor account). For
+everyone else the record page (`/record/:rid`, including the websocket
+re-render of the status block) shows only the overall verdict, the verdict and
+device time per testcase, the device-time geometric mean and the leaderboard
+rank; judge messages, compiler text, the judge log, hardware counters, timing
+details and the source code are hidden, and `/record/:rid/profile` and
+`/record/:rid/profile/:artifact` answer 403. The leaderboard itself is public
+to logged-in accounts, so rank, speedup and per-testcase device times are not
+considered private.
 
 The finalized inventory lists exact private/public file paths, SHA-256 and byte
 sizes. It excludes itself to avoid a self-hash cycle. It does not inventory

@@ -4,12 +4,21 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 import statistics
 import time
 
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def numeric_block(value):
+    """Keep only finite numeric fields with simple keys from a wrapper-provided object."""
+    if not isinstance(value, dict):
+        return None
+    return {key: item for key, item in value.items()
+            if re.fullmatch(r"[a-z0-9_]{1,64}", str(key)) and type(item) in (int, float, bool) and math.isfinite(item)}
 
 
 def percentile(values, p):
@@ -50,6 +59,12 @@ def summarize_profile(profile):
             metadata[name] = profile[name]
     scope = profile.get("timing_scope")
     metadata["timing_scope"] = scope if scope in ("host_submit_to_device_complete", "device_kernel_cycles") else "unknown_redacted"
+    # TT-Lang exercise wrappers add numeric-only correctness and perf-summary blocks; copy numbers, never free text.
+    for block in ("correctness", "traffic"):
+        if isinstance(profile.get(block), dict):
+            metadata[block] = numeric_block(profile[block])
+    if profile.get("exercise") in ("vector-add", "ragged-sum", "ragged-softmax"):
+        metadata["exercise"] = profile["exercise"]
     clock = profile.get("clock")
     if clock in ("perf_counter", "steady_clock"):
         metadata["clock"] = clock
@@ -109,7 +124,7 @@ def quality_report(cases):
     warnings = [
         "Host CPU sets separate OJ services but do not isolate OS tasks or IRQs.",
         "The mesh lock coordinates OJ workers; host programs outside OJ are not fully excluded.",
-        "Device profiler is an instrumented diagnostic pass; do not mix its latency with the uninstrumented host pass.",
+        "Device cycles and host latencies are measured with the device profiler enabled; host latencies include its overhead and are diagnostic only.",
         "Nanoseconds are storage units and clock resolution, not a nanosecond accuracy guarantee.",
     ]
     if any(c.get("host", {}).get("statistics", {}).get("cv_percent", 0) > 5 for c in cases):
@@ -119,7 +134,7 @@ def quality_report(cases):
     if any(c.get("runtime_affinity_warning") for c in cases):
         warnings.append("The SDK reported a thread affinity failure; container CPU affinity still applies, but per-thread placement is not assured.")
     reasons = ["cpu_irq_isolation_not_verified", "external_host_workloads_not_fully_excluded",
-               "clock_frequency_not_locked_or_calibrated", "device_profiler_is_instrumented_separate_pass",
+               "clock_frequency_not_locked_or_calibrated", "device_profiler_is_instrumented",
                "cross_core_total_device_elapsed_not_calibrated", "submission_wrapper_not_tamper_attested"]
     if not cases:
         reasons.append("no_completed_cases")

@@ -125,5 +125,8 @@
   "The CSV clock is a snapshot taken when the profiler initializes. Microsecond conversions assume it stays constant; frequency changes are not tracked for each event.": "CSV 中的设备时钟来自 profiler 初始化时的一次快照。换算微秒时假设时钟保持不变；它没有逐事件跟踪频率变化。",
   "RISC counters are synchronized within a core. Different cores may have clock skew, and clocks are not synchronized across devices.": "同一核心内的 RISC 计数器已同步。不同核心可能存在时钟偏差，不同设备的时钟也没有同步。",
   "Device timings are collected in a separate pass with the device profiler enabled. Host timings use the same SDK with the device profiler disabled.": "设备计时来自单独开启设备 profiler 的执行。主机计时使用相同 SDK，并关闭设备 profiler。",
-  "Both passes use the same profiler-capable SDK. Host samples include its library and dispatch overhead with device profiling disabled.": "两种执行使用同一个支持 profiler 的 SDK。主机样本在关闭设备 profiling 时计时，包含库与调度开销。"
+  "Both passes use the same profiler-capable SDK. Host samples include its library and dispatch overhead with device profiling disabled.": "两种执行使用同一个支持 profiler 的 SDK。主机样本在关闭设备 profiling 时计时，包含库与调度开销。",
+  "tt_leaderboard": "排行榜",
+  "tt_initial_password_notice": "你的账号仍在使用初始密码（G 号）。请现在<a href=\"/home/security\">修改密码</a>：OJ 走明文 HTTP，请使用一个在别处没用过的密码。",
+  "Change password": "修改密码"
 }

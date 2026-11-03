@@ -19,5 +19,8 @@
   "invalid_profile_json": "The profiling JSON is invalid.",
   "profile_is_not_an_object": "The profiling data is not a valid object.",
   "invalid_or_missing_samples": "Profiling samples are missing or invalid.",
-  "Device profiler is an instrumented diagnostic pass; do not mix its latency with the uninstrumented host pass.": "The device profiler runs as a separate diagnostic pass; keep its latency separate from the host pass, where device profiling is disabled."
+  "Device profiler is an instrumented diagnostic pass; do not mix its latency with the uninstrumented host pass.": "The device profiler runs as a separate diagnostic pass; keep its latency separate from the host pass, where device profiling is disabled.",
+  "tt_leaderboard": "Leaderboard",
+  "tt_initial_password_notice": "Your account still uses its initial password (your G number). <a href=\"/home/security\">Change your password</a> now: it takes a minute, and the OJ runs over plain HTTP, so use a password you do not use anywhere else.",
+  "Change password": "Change password"
 }

@@ -1,0 +1,74 @@
+{
+  "id": "TT3002",
+  "title": "TT-Lang · Ragged row sum",
+  "titles": {
+    "zh": "TT-Lang · 不等长行求和",
+    "en": "TT-Lang · Ragged row sum"
+  },
+  "content": "# TT-Lang · Ragged row sum\n\nFor `x` of shape `[R, L]` and `lengths[r]` in `[0, L]`, compute `out[r] = sum(x[r, :lengths[r]])`; empty rows give 0.\n\nSubmit one Python file that defines:\n\n```python\nimport ttl\n\n@ttl.operation(grid=(1, 1))\ndef ragged_sum(x, valid, out):\n    ...\n```\n\n## How the judge runs your code\n\nThe judge imports your file and calls the operation named **`ragged_sum`** exactly as shown in the signature; it\nnever calls anything else. Inputs are already **FP32, tile-layout tensors in device DRAM** on device 0 and the\noutput tensor `out` is preallocated with zeros. Do not open or close the device, do not read stdin and do not\nprint the answer. Only the TT-Lang operation runs on hardware; host-side code in your file runs once at import.\n\nPadding: `x` is zero-padded to `(R_pad, W_pad)` with both divisible by 32. `valid` has the same padded shape and holds 1.0 on the first `lengths[r]` columns of row r and 0.0 elsewhere (padding included). `out` has shape `(R_pad, 32)`; the judge reads column 0 of the first R rows. Wide rows (W_pad up to 16,384 = 512 tiles) do not fit in L1 as one block: process rows in chunks and accumulate.\n\nCorrectness: every logical output element must satisfy `|got - want| <= 1e-06 + 0.00390625 x scale`, where\nscale is sum of |x| over the valid prefix of the row. The FPU rounds FP32 operands to about 11 significant bits, so the tolerance is deliberately\nwider than FP32 epsilon; `ttl.exp` and other SFPU functions keep FP32 precision.\n\n## Test cases\n\n| # | R | L | padded (R_pad × W_pad) |\n|---|---|---|---|\n| 1 | 256 | 65 | 256 × 96 |\n| 2 | 8,192 | 96 | 8,192 × 96 |\n| 3 | 1,024 | 542 | 1,024 × 544 |\n| 4 | 1,024 | 8,192 | 1,024 × 8,192 |\n| 5 | 32 | 16,384 | 32 × 16,384 |\n| 6 | 7 | 17 | 32 × 32 |\n| 7 | 33 | 1 | 64 × 32 |\n| 8 | 127 | 37 | 128 × 64 |\n| 9 | 4,097 | 257 | 4,128 × 288 |\n| 10 | 1 | 8,193 | 32 × 8,224 |\n\nInputs are generated from a fixed seed, so every submission sees the same data.\n\n## Limits and quota\n\n- One case at a time, **180 s wall time per case** including TT-Lang compilation, and 8 GB host memory.\n- **Each account may submit at most 200 times to this problem** (pretests included); the quota is per account\n  and per problem. The problem page shows how many your account has used. Test locally first; you cannot buy back\n  a wasted submission.\n- Runtime: tt-lang `1.1.10.dev20260921` (bundled ttnn, Blackhole p300c). `ttl.grid_size(dims=1)` and\n  `ttl.node(dims=1)` are supported in this version. The starter file is attached as `starter.py`.\n\n## Profile summary\n\nEvery accepted case returns a profile summary on the record page. The number that counts is the\n**device time**: with the device profiler enabled (first invocation checked for correctness, then 3 warmups and\n7 samples), the time from the first kernel start to the last kernel end over all cores, median over the samples. It excludes host dispatch, JIT\ncompilation and data transfers. The submission's score for the **leaderboard** is the geometric mean of the\ndevice times of the 10 testcases; the leaderboard lists each account's fastest accepted submission\nand its speedup over the single-core reference (68.5 µs). Report device times in your report.\n\nThe record page also shows the cores your kernel used, its **effective bandwidth** (the bytes the problem must\nread and write divided by device time; Blackhole DRAM peaks at about 512 GB/s), per-RISC kernel cycles per core\nand, for diagnosis only, host-side timing of the call.\n\n**Hardware counters.** A third pass reads the Tensix performance counters (FPU, SFPU, unpackers, packer, and the\nthree instruction threads) and reports, per testcase, how much of the kernel window each unit was busy, how often\neach thread stalled and why (waiting on semaphores, SrcA/SrcB, unpack/pack/math idle). Use them in your report to\nexplain where time goes; the raw 85 counters are downloadable as CSV.\n",
+  "language": "ttlang",
+  "mode": "ttlang",
+  "time_ms": 180000,
+  "submission_limit": 200,
+  "atol": 0,
+  "rtol": 0,
+  "tolerance": {
+    "atol": 1e-06,
+    "rtol": 0.00390625,
+    "scale": "sum of |x| over the valid prefix of the row"
+  },
+  "tests": [
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 1, \"R\": 256, \"L\": 65, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 2, \"R\": 8192, \"L\": 96, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 3, \"R\": 1024, \"L\": 542, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 4, \"R\": 1024, \"L\": 8192, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 5, \"R\": 32, \"L\": 16384, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 6, \"R\": 7, \"L\": 17, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 7, \"R\": 33, \"L\": 1, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 8, \"R\": 127, \"L\": 37, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 9, \"R\": 4097, \"L\": 257, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"ragged-sum\", \"entry\": \"ragged_sum\", \"seed\": 540, \"case_id\": 10, \"R\": 1, \"L\": 8193, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    }
+  ],
+  "reference_device_us": [
+    16.194,
+    497.853,
+    346.578,
+    2405.836,
+    136.904,
+    1.717,
+    2.433,
+    4.815,
+    743.227,
+    166.361
+  ]
+}

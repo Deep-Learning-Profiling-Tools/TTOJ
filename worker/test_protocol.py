@@ -36,9 +36,32 @@ def outcome(status=None, actual="1"):
             "telemetry": [], "profiler_csv": None}
 
 
+TTLANG_MANIFEST = {"mode": "ttlang", "language": "ttlang", "atol": 1e-6, "rtol": 0.004, "time_ms": 60000,
+                   "tests": [{"input": json.dumps({"exercise": "vector-add", "entry": "vector_add", "seed": 540, "case_id": i, "N": 32 * i}),
+                              "output": '{"verdict": "pass"}\n'} for i in (1, 2, 3)]}
+
+
+def batch_outcome(cases, status=None):
+    """Wrapper stdout for a batched TT-Lang pass: cases maps id -> 'pass' | 'fail' | 'error' | None (started only)."""
+    lines = []
+    for case_id, verdict in cases.items():
+        lines.append("TT_OJ_CASE_START:" + json.dumps({"id": case_id}))
+        if verdict == "error":
+            lines.append("TT_OJ_CASE:" + json.dumps({"id": case_id, "error": "Traceback\nRuntimeError: boom"}))
+        elif verdict:
+            profile = {"samples_ns": [100, 110, 120, 130, 140, 150, 160], "warmup": 3, "repeatability_verified": True,
+                       "timing_scope": "host_submit_to_device_complete", "instrumented": True,
+                       "device_capture": {"warmup": 3, "sample_count": 7, "selection": "csv_append_byte_ranges", "sample_byte_ranges": []}}
+            lines.append("TT_OJ_CASE:" + json.dumps({"id": case_id, "result": {"verdict": verdict}, "detail": "d", "profile": profile,
+                                                     "csv": None, "wall_ns": 1500000000}))
+    return {"status": status, "time": 12.5, "memory": 10, "stdout": "\n".join(lines) + "\n", "stderr": "", "exit_code": 0 if status is None else 1,
+            "telemetry": [], "profiler_csv": None, "profiler_csvs": {}}
+
+
 class FakeExecution:
     def __init__(self, value, attempt, case_id=1, delay=0):
         self.value, self.delay = value, delay
+        self.expire_requested = False
         self.attempt, self.case_id, self.pass_name = attempt, case_id, "host"
         self.container = SimpleNamespace(id="fake-container")
         self.out, self.err = bytearray(), bytearray()
@@ -67,6 +90,7 @@ class FakeJudge(worker.Judge):
         self.policy = load_policy()[1]
         self.active, self.attempt = None, None
         self.messages, self.executions = [], []
+        self.chips, self.jobs, self.send_lock = worker.ChipPool(worker.CHIPS), {}, asyncio.Lock()
         self.values = values if values is not None else [outcome()]
         self.manifest_error, self.preflight_error, self.delay = manifest_error, preflight_error, delay
         images = SimpleNamespace(get=lambda tag: SimpleNamespace(id="sha256:" + tag, attrs={"RepoDigests": []}))
@@ -86,8 +110,11 @@ class FakeJudge(worker.Judge):
     async def send(self, rid, key, **payload):
         self.messages.append({"rid": rid, "key": key, **payload})
 
-    async def prepare_execution(self, folder, task, manifest, case, profiling=False):
-        execution = FakeExecution(self.values.pop(0), self.attempt, delay=self.delay)
+    async def prepare_execution(self, folder, task, manifest, case, profiling=False, counters=False, attempt=None,
+                                chips=None, batch_cases=None):
+        # Since the chip pool (round 3) the attempt is a local of judge(), passed to every container.
+        execution = FakeExecution(self.values.pop(0), attempt, delay=self.delay)
+        execution.batch_cases, execution.input = batch_cases, case["input"]
         self.executions.append(execution)
         return execution
 
@@ -136,6 +163,50 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([entry["sequence"] for entry in events], list(range(1, len(events) + 1)))
         self.assertEqual(events[-1]["event"], "attempt_terminal")
         self.assertTrue(all("utc" in entry and "monotonic_ns" in entry for entry in events))
+
+    @patch.object(worker, "DEVICE_PROFILER_SUPPORTED", True)
+    async def test_ttlang_batch_judges_every_case_in_one_container(self):
+        task = {**TASK, "lang": "ttlang", "code": "import ttl\ndef vector_add(a, b, out):\n    pass\n"}
+        judge = FakeJudge([batch_outcome({1: "pass", 2: "fail", 3: "pass"}), batch_outcome({1: "pass", 3: "pass"})])
+        judge.manifest = lambda t: asyncio.sleep(0, result=(copy.deepcopy(TTLANG_MANIFEST), json.dumps(TTLANG_MANIFEST).encode()))
+        await judge.judge(task)
+        report = self.report()
+        self.assertEqual([case["status"] for case in report["cases"]], [worker.AC, worker.WA, worker.AC])
+        self.assertEqual(report["final"]["status"], worker.WA)
+        self.assertEqual(len(judge.executions), 2, "one profile container and one counters container")
+        self.assertEqual(judge.executions[0].batch_cases, [1, 2, 3])
+        self.assertEqual(judge.executions[1].batch_cases, [1, 3], "counters only for accepted cases")
+        batch = json.loads(judge.executions[0].input)
+        self.assertEqual((batch["pass"], batch["warmup"], batch["samples"], [c["id"] for c in batch["cases"]]), ("profile", 3, 7, [1, 2, 3]))
+        self.assertEqual(json.loads(judge.executions[1].input)["pass"], "counters")
+        hydro_cases = [m["case"] for m in judge.messages if m.get("case")]
+        self.assertEqual([c["status"] for c in hydro_cases], [worker.AC, worker.WA, worker.AC])
+        self.assertAlmostEqual(hydro_cases[0]["time"], 1500.0)
+        self.assertTrue(report["cases"][0]["host"]["available"])
+        self.assertEqual(report["cases"][1]["host"]["reason"], "not_timed_non_accepted_case")
+        self.assertEqual(report["cases"][0]["device"]["reason"], "device_csv_not_collected")
+        self.assertTrue(all(e.removed for e in judge.executions))
+        self.verify(report)
+
+    @patch.object(worker, "DEVICE_PROFILER_SUPPORTED", True)
+    async def test_ttlang_batch_stops_at_first_error_and_timeout(self):
+        task = {**TASK, "lang": "ttlang", "code": "import ttl\ndef vector_add(a, b, out):\n    pass\n"}
+        judge = FakeJudge([batch_outcome({1: "pass", 2: "error"}), batch_outcome({1: "pass"})])
+        judge.manifest = lambda t: asyncio.sleep(0, result=(copy.deepcopy(TTLANG_MANIFEST), json.dumps(TTLANG_MANIFEST).encode()))
+        await judge.judge(task)
+        report = self.report()
+        self.assertEqual([case["status"] for case in report["cases"]], [worker.AC, worker.RE, None])
+        self.assertEqual(report["cases"][2]["state"], "not_run")
+        self.assertEqual(report["final"]["status"], worker.RE)
+        self.assertEqual(len([m for m in judge.messages if m.get("case")]), 2)
+        judge = FakeJudge([batch_outcome({1: "pass", 2: None}, status=worker.TLE), batch_outcome({1: "pass"})])
+        judge.manifest = lambda t: asyncio.sleep(0, result=(copy.deepcopy(TTLANG_MANIFEST), json.dumps(TTLANG_MANIFEST).encode()))
+        await judge.judge(task)
+        report = self.report()
+        self.assertEqual([case["status"] for case in report["cases"]], [worker.AC, worker.TLE, None])
+        self.assertEqual(report["final"]["status"], worker.TLE)
+        self.assertEqual(len(judge.executions), 2, "counters still collected for the accepted case")
+        self.verify(report)
 
     async def test_all_case_verdicts_persist(self):
         for expected, value in [(worker.AC, outcome()), (worker.WA, outcome(actual="2")),
@@ -253,11 +324,11 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         container = SimpleNamespace(id="fake", remove=unittest.mock.Mock())
         judge = FakeJudge()
         judge.docker = SimpleNamespace(containers=SimpleNamespace(create=unittest.mock.Mock(return_value=container)))
-        judge.attempt = SimpleNamespace(id="fake-attempt", event=unittest.mock.Mock(side_effect=OSError("storage failure")))
+        attempt = SimpleNamespace(id="fake-attempt", event=unittest.mock.Mock(side_effect=OSError("storage failure")))
         folder = self.jobs / "case" / "1"
         manifest = {"mode": "metalium-riscv"}
         with self.assertRaises(OSError):
-            judge.prepare(folder, {**TASK, "code": "// source"}, manifest, {"input": "1 2"})
+            judge.prepare(folder, {**TASK, "code": "// source"}, manifest, {"input": "1 2"}, attempt=attempt)
         container.remove.assert_called_once_with(force=True)
 
     async def test_recipe_mismatch_explicitly_disqualifies(self):

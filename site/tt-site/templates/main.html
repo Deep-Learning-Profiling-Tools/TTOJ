@@ -4,7 +4,7 @@
 <div class="row"><div class="columns">
   <section class="section">
     <div class="section__body typo" style="padding:28px">
-      <p style="letter-spacing:.08em;color:#67748a">BLACKHOLE · TTNN · METALIUM</p>
+      <p style="letter-spacing:.08em;color:#67748a">BLACKHOLE · TT-LANG · TTNN · METALIUM</p>
       <h1 style="margin:8px 0 14px">{{ _('Run your code on Tenstorrent') }}</h1>
       <p>{{ _('Submit tensor operations and device kernels to the local Blackhole accelerator. Inspect correctness, logs, and profiling in one place.') }}</p>
       <a class="primary rounded button" href="/p">{{ _('Browse accelerator problems') }}</a>
@@ -15,6 +15,9 @@
 </div></div>
 <div class="row">
   {% for task in [
+    ['TT3001', 'TT-Lang · Vector addition', 'CS540: write a TT-Lang operation that adds two FP32 vectors of up to 16.7M values.'],
+    ['TT3002', 'TT-Lang · Ragged row sum', 'CS540: sum the valid prefix of every row; rows up to 16,384 values wide.'],
+    ['TT3003', 'TT-Lang · Ragged softmax', 'CS540: softmax over the valid prefix of every row, zeros elsewhere.'],
     ['TT1001', 'TTNN · Elementwise addition', 'Write solve(a, b) in Python and return a TTNN device tensor.'],
     ['TT1002', 'TTNN · Matrix multiplication', 'Explore matrix multiplication with tiled BF16 tensors.'],
     ['TT2001', 'Metalium · RISC-V integer addition', 'Move data through NoC and add uint32 values in a device kernel.'],

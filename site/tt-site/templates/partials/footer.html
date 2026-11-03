@@ -3,12 +3,157 @@
     <div class="footer__extra-left"><ol class="clearfix">
       <li class="footer__extra-link-item"><a href="/wiki/help">{{ _('Getting started') }}</a></li>
       <li class="footer__extra-link-item"><a href="/profiling">{{ _('Profiling') }}</a></li>
+      <li class="footer__extra-link-item"><a href="/leaderboard">{{ _('Leaderboard') }}</a></li>
       <li class="footer__extra-link-item"><a href="/status">{{ _('Service Status') }}</a></li>
-      <li class="footer__extra-link-item"><a href="/wiki/about">{{ _('About') }}</a></li>
       <li class="footer__extra-link-item"><a href="{{ ttSourceUrl }}">{{ _('Source code') }}</a></li>
     </ol></div>
     <div class="footer__extra-right"><ol class="clearfix">
-      <li class="footer__extra-link-item">Powered by <a href="https://hydro.js.org">Hydro v{{ global.Hydro.version.hydrooj }}</a> {{ "Professional" if model.system.get('server.pro') else "Community" }} · Modified by TTOJ</li>
+      <li class="footer__extra-link-item">Powered by <a href="https://hydro.js.org">Hydro v{{ global.Hydro.version.hydrooj }}</a> · Modified by TTOJ</li>
     </ol></div>
   </div>
 </div></div></footer>
+<style id="tt-style">
+/* TT OJ design tokens: light values on :root, dark values when Hydro sets .theme--dark on <html>. */
+:root { --tt-bg:#f5f7fa; --tt-card:#ffffff; --tt-ink:#1f2328; --tt-muted:#636c76; --tt-line:#d8dee4; --tt-soft:#f0f3f6;
+  --tt-accent:#2563eb; --tt-accent-ink:#ffffff; --tt-ok:#1a7f37; --tt-ok-bg:#dafbe1; --tt-bad:#cf222e; --tt-bad-bg:#ffebe9;
+  --tt-warn:#9a6700; --tt-warn-bg:#fff8c5; --tt-bar:#2563eb; --tt-bar-bg:#e6e9ee; --tt-bar-stall:#d97706;
+  --tt-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.theme--dark { --tt-bg:#0f1115; --tt-card:#171a21; --tt-ink:#e6e8eb; --tt-muted:#9aa3ad; --tt-line:#2b313b; --tt-soft:#1f2430;
+  --tt-accent:#6ea8fe; --tt-accent-ink:#0b1220; --tt-ok:#3fb950; --tt-ok-bg:#12351d; --tt-bad:#ff7b72; --tt-bad-bg:#3b1a1d;
+  --tt-warn:#d29922; --tt-warn-bg:#3a2d10; --tt-bar:#6ea8fe; --tt-bar-bg:#2b313b; --tt-bar-stall:#e3a008; }
+.theme--dark body, .theme--dark #panel, .theme--dark .main { background: var(--tt-bg); color: var(--tt-ink); }
+.theme--dark .section, .theme--dark .section__body, .theme--dark .typo { background: var(--tt-card); color: var(--tt-ink); }
+.theme--dark .section__header, .theme--dark .section__title, .theme--dark h1, .theme--dark h2, .theme--dark h3, .theme--dark h4 { color: var(--tt-ink); }
+.theme--dark table, .theme--dark .data-table { color: var(--tt-ink); }
+.theme--dark th { background: var(--tt-soft); color: var(--tt-muted); }
+.theme--dark td, .theme--dark th { border-color: var(--tt-line); }
+.theme--dark .typo a, .theme--dark a { color: var(--tt-accent); }
+.theme--dark code, .theme--dark pre { background: var(--tt-soft); color: var(--tt-ink); }
+.theme--dark blockquote { background: var(--tt-soft); border-color: var(--tt-line); color: var(--tt-ink); }
+.theme--dark blockquote.warn { border-color: #ff4136; }
+.theme--dark .nav { background: var(--tt-card); border-bottom: 1px solid var(--tt-line); }
+.theme--dark .nav .nav__item { color: var(--tt-ink); }
+.theme--dark .footer { background: var(--tt-bg); color: var(--tt-muted); }
+.theme--dark input, .theme--dark select, .theme--dark textarea { background: var(--tt-soft); color: var(--tt-ink); border-color: var(--tt-line); }
+.theme--dark .button, .theme--dark .rounded.button { background: var(--tt-soft); color: var(--tt-ink); border-color: var(--tt-line); }
+.theme--dark .primary.button { background: var(--tt-accent); color: var(--tt-accent-ink); }
+.theme--dark .primary.button, .theme--dark .primary.button:visited, .theme--dark .primary.button:hover, .theme--dark .primary.button:focus, .theme--dark .typo .primary.button, .theme--dark .typo .primary.button:visited { color: var(--tt-accent-ink) !important; }
+.theme--dark details summary { color: var(--tt-ink); }
+.tt-brand { font-weight: 700; letter-spacing: .04em; }
+#tt-theme-toggle { color: var(--tt-muted); }
+
+/* Cards, stat tiles, badges, tables, meters. */
+.tt-card { background: var(--tt-card); border: 1px solid var(--tt-line); border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
+.tt-card h2, .tt-card h3 { margin: 0 0 10px; font-weight: 600; }
+.tt-card h2 { font-size: 1.1rem; } .tt-card h3 { font-size: .95rem; color: var(--tt-muted); text-transform: uppercase; letter-spacing: .05em; }
+.tt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 8px 0 4px; }
+.tt-stat { background: var(--tt-soft); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tt-stat b { display: block; font-size: 11px; color: var(--tt-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.tt-stat span { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--tt-ink); }
+.tt-stat small { display: block; font-size: 11px; color: var(--tt-muted); margin-top: 2px; }
+.tt-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; }
+.tt-badge.ok { background: var(--tt-ok-bg); color: var(--tt-ok); } .tt-badge.bad { background: var(--tt-bad-bg); color: var(--tt-bad); }
+.tt-badge.warn { background: var(--tt-warn-bg); color: var(--tt-warn); } .tt-badge.muted { background: var(--tt-soft); color: var(--tt-muted); }
+.tt-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tt-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--tt-muted); padding: 6px 8px; border-bottom: 1px solid var(--tt-line); white-space: nowrap; background: transparent; }
+.tt-table td { padding: 7px 8px; border-bottom: 1px solid var(--tt-line); vertical-align: middle; }
+.tt-table td.num, .tt-table th.num { text-align: right; white-space: nowrap; }
+.tt-table tr:last-child td { border-bottom: 0; }
+.tt-table .tt-sub { color: var(--tt-muted); font-size: 12px; }
+.tt-scroll { overflow-x: auto; }
+.tt-meter { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; }
+.tt-meter i { display: inline-block; height: 8px; width: 90px; background: var(--tt-bar-bg); border-radius: 4px; overflow: hidden; position: relative; }
+.tt-meter i::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--w, 0%); background: var(--tt-bar); border-radius: 4px; }
+.tt-meter.stall i::after { background: var(--tt-bar-stall); }
+.tt-meter span { font-size: 12px; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.tt-note { font-size: 12px; color: var(--tt-muted); margin: 6px 0 0; }
+.tt-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; margin: 0; }
+.tt-kv dt { color: var(--tt-muted); } .tt-kv dd { margin: 0; }
+.tt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+.tt-actions a { font-size: 12px; }
+.tt-case-detail { margin-top: 8px; }
+.tt-case-detail summary { cursor: pointer; font-size: 13px; color: var(--tt-accent); }
+.tt-threads { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.tt-thread { background: var(--tt-soft); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.tt-thread b { display: block; margin-bottom: 4px; }
+.tt-thread ul { margin: 6px 0 0; padding-left: 0; list-style: none; }
+.tt-thread li { display: flex; justify-content: space-between; gap: 8px; color: var(--tt-muted); font-size: 12px; padding: 2px 0; }
+.tt-thread li span:last-child { font-variant-numeric: tabular-nums; color: var(--tt-ink); }
+.tt-mono { font-family: var(--tt-mono); font-size: 12px; }
+.tt-lead { color: var(--tt-muted); font-size: 14px; margin: 0 0 10px; }
+.tt-rank { font-size: 13px; color: var(--tt-muted); }
+.tt-rank b { color: var(--tt-ink); }
+
+/* Workspace (Hydro scratchpad): statement left, editor right, submissions below the editor. */
+.scratchpad-container { background: var(--tt-bg); }
+.theme--dark .scratchpad-container, .theme--dark #scratchpad { background: var(--tt-bg); }
+.scratchpad__problem { background: var(--tt-card); padding: 8px 28px 40px; color: var(--tt-ink); }
+.scratchpad__problem .problem-content { max-width: 72ch; }
+.scratchpad__toolbar { background: var(--tt-card); border-bottom: 1px solid var(--tt-line); padding: 8px 10px; display: flex; align-items: center; }
+.scratchpad__toolbar__button { color: var(--tt-ink); border-radius: 6px; padding: 6px 12px; }
+.scratchpad__toolbar__button.enabled:hover { background: var(--tt-soft); color: var(--tt-ink); }
+.scratchpad__toolbar__submit.enabled { background: var(--tt-ok); color: #fff; font-weight: 600; }
+.scratchpad__toolbar__submit.enabled:hover { background: var(--tt-ok); color: #fff; opacity: .9; }
+.scratchpad__toolbar__submit.enabled:hover .icon { color: #fff; }
+.scratchpad__toolbar__split { background: var(--tt-line); }
+.scratchpad__toolbar .select { background: var(--tt-soft); color: var(--tt-ink); border: 1px solid var(--tt-line); border-radius: 6px; padding: 4px 8px; }
+.scratchpad__panel-title { background: var(--tt-card); color: var(--tt-ink); border-top: 1px solid var(--tt-line); border-bottom: 1px solid var(--tt-line); font-weight: 600; }
+.scratchpad__records__table { font-size: 13px; }
+.theme--dark .scratchpad__records__table td, .theme--dark .scratchpad__records__table th { border-color: var(--tt-line); }
+.scratchpad__tablist { background: var(--tt-card); border-right: 1px solid var(--tt-line); }
+.theme--dark .allotment-module_sash__K-9lB, .theme--dark .sash { background: var(--tt-line); }
+</style>
+<script>
+(function () {
+  var html = document.documentElement;
+  var toggle = document.getElementById('tt-theme-toggle');
+  function apply(theme) {
+    html.classList.remove('theme--light', 'theme--dark');
+    html.classList.add('theme--' + theme);
+    html.setAttribute('data-mantine-color-scheme', theme);
+    if (toggle) { toggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode'; toggle.setAttribute('data-theme', theme); }
+    try {
+      localStorage.setItem('tt-theme', theme);
+      // The Monaco editor in the workspace reads its options from editor.config.
+      var config = JSON.parse(localStorage.getItem('editor.config') || '{}');
+      config.theme = theme === 'dark' ? 'vs-dark' : 'vs-light';
+      localStorage.setItem('editor.config', JSON.stringify(config));
+    } catch (e) { /* storage blocked */ }
+  }
+  if (toggle) {
+    var loggedIn = toggle.getAttribute('data-logged-in') === 'yes';
+    if (!loggedIn) {
+      var saved = null;
+      try { saved = localStorage.getItem('tt-theme'); } catch (e) { /* storage blocked */ }
+      if (saved === 'dark' || saved === 'light') apply(saved);
+    } else {
+      apply(html.classList.contains('theme--dark') ? 'dark' : 'light');
+    }
+    toggle.addEventListener('click', function () {
+      var next = html.classList.contains('theme--dark') ? 'light' : 'dark';
+      apply(next);
+      if (loggedIn) {
+        fetch('/home/settings/preference', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ theme: next }) }).catch(function () {});
+      }
+    });
+  }
+  // Problem pages: open the split workspace (statement | editor + submissions) for TT-Lang problems.
+  function context() {
+    var c = window.UiContext;
+    if (typeof c === 'string') { try { return JSON.parse(c); } catch (e) { return {}; } }
+    return c || {};
+  }
+  var workspace = context().ttWorkspace;
+  if (workspace && workspace.auto) {
+    try { localStorage.setItem('scratchpad/records', 'true'); } catch (e) { /* storage blocked */ }
+    var tries = 0;
+    var timer = setInterval(function () {
+      var link = document.querySelector('[name="problem-sidebar__open-scratchpad"]');
+      tries += 1;
+      if (link) { clearInterval(timer); link.click(); }
+      else if (tries > 40) clearInterval(timer);
+    }, 250);
+  }
+})();
+</script>

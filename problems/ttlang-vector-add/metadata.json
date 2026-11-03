@@ -1,0 +1,74 @@
+{
+  "id": "TT3001",
+  "title": "TT-Lang · Vector addition",
+  "titles": {
+    "zh": "TT-Lang · 向量加法",
+    "en": "TT-Lang · Vector addition"
+  },
+  "content": "# TT-Lang · Vector addition\n\nImplement **out = a + b** for FP32 vectors of length N (1 ≤ N ≤ 16,777,217) as a TT-Lang operation.\n\nSubmit one Python file that defines:\n\n```python\nimport ttl\n\n@ttl.operation(grid=(1, 1))\ndef vector_add(a, b, out):\n    ...\n```\n\n## How the judge runs your code\n\nThe judge imports your file and calls the operation named **`vector_add`** exactly as shown in the signature; it\nnever calls anything else. Inputs are already **FP32, tile-layout tensors in device DRAM** on device 0 and the\noutput tensor `out` is preallocated with zeros. Do not open or close the device, do not read stdin and do not\nprint the answer. Only the TT-Lang operation runs on hardware; host-side code in your file runs once at import.\n\nPadding: the judge pads `a` and `b` with zeros to `P = 1024 * ceil(N / 1024)` values and uploads them as `(P / 32, 32)` tiles; `out` has the same shape. Only the first N values of `out` (row-major) are checked.\n\nCorrectness: every logical output element must satisfy `|got - want| <= 1e-06 + 0.00390625 x scale`, where\nscale is |a| + |b| per element. The FPU rounds FP32 operands to about 11 significant bits, so the tolerance is deliberately\nwider than FP32 epsilon; `ttl.exp` and other SFPU functions keep FP32 precision.\n\n## Test cases\n\n| # | N | padded tiles |\n|---|---|---|\n| 1 | 1 | 1 |\n| 2 | 31 | 1 |\n| 3 | 33 | 1 |\n| 4 | 1,023 | 1 |\n| 5 | 1,024 | 1 |\n| 6 | 1,025 | 2 |\n| 7 | 65,537 | 65 |\n| 8 | 1,048,577 | 1025 |\n| 9 | 16,777,216 | 16384 |\n| 10 | 16,777,217 | 16385 |\n\nInputs are generated from a fixed seed, so every submission sees the same data.\n\n## Limits and quota\n\n- One case at a time, **180 s wall time per case** including TT-Lang compilation, and 8 GB host memory.\n- **Each account may submit at most 200 times to this problem** (pretests included); the quota is per account\n  and per problem. The problem page shows how many your account has used. Test locally first; you cannot buy back\n  a wasted submission.\n- Runtime: tt-lang `1.1.10.dev20260921` (bundled ttnn, Blackhole p300c). `ttl.grid_size(dims=1)` and\n  `ttl.node(dims=1)` are supported in this version. The starter file is attached as `starter.py`.\n\n## Profile summary\n\nEvery accepted case returns a profile summary on the record page. The number that counts is the\n**device time**: with the device profiler enabled (first invocation checked for correctness, then 3 warmups and\n7 samples), the time from the first kernel start to the last kernel end over all cores, median over the samples. It excludes host dispatch, JIT\ncompilation and data transfers. The submission's score for the **leaderboard** is the geometric mean of the\ndevice times of the 10 testcases; the leaderboard lists each account's fastest accepted submission\nand its speedup over the single-core reference (22.1 µs). Report device times in your report.\n\nThe record page also shows the cores your kernel used, its **effective bandwidth** (the bytes the problem must\nread and write divided by device time; Blackhole DRAM peaks at about 512 GB/s), per-RISC kernel cycles per core\nand, for diagnosis only, host-side timing of the call.\n\n**Hardware counters.** A third pass reads the Tensix performance counters (FPU, SFPU, unpackers, packer, and the\nthree instruction threads) and reports, per testcase, how much of the kernel window each unit was busy, how often\neach thread stalled and why (waiting on semaphores, SrcA/SrcB, unpack/pack/math idle). Use them in your report to\nexplain where time goes; the raw 85 counters are downloadable as CSV.\n",
+  "language": "ttlang",
+  "mode": "ttlang",
+  "time_ms": 180000,
+  "submission_limit": 200,
+  "atol": 0,
+  "rtol": 0,
+  "tolerance": {
+    "atol": 1e-06,
+    "rtol": 0.00390625,
+    "scale": "|a| + |b| per element"
+  },
+  "tests": [
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 1, \"N\": 1, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 2, \"N\": 31, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 3, \"N\": 33, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 4, \"N\": 1023, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 5, \"N\": 1024, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 6, \"N\": 1025, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 7, \"N\": 65537, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 8, \"N\": 1048577, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 9, \"N\": 16777216, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    },
+    {
+      "input": "{\"exercise\": \"vector-add\", \"entry\": \"vector_add\", \"seed\": 540, \"case_id\": 10, \"N\": 16777217, \"tolerance\": {\"atol\": 1e-06, \"rtol\": 0.00390625}}\n",
+      "output": "{\"verdict\": \"pass\"}\n"
+    }
+  ],
+  "reference_device_us": [
+    1.33,
+    1.327,
+    1.339,
+    1.352,
+    1.336,
+    1.92,
+    42.126,
+    660.164,
+    10918.5,
+    10918.517
+  ]
+}
