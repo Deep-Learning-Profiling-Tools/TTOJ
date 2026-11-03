@@ -155,6 +155,12 @@ branch needs one action by jgu7 (or any root user), either:
   `compose.staging.yaml` and run `docker compose -p tenstorrent-oj-staging -f
   compose.yaml -f compose.staging.yaml up -d site`. The tunnel is untouched.
 
+**Done on 2026-11-03 with the second option:** the old deployment's site and
+worker containers were stopped (`docker stop`, its mongo container and volumes
+untouched), and `compose.staging.yaml` publishes the site on both
+`127.0.0.1:8888` and `127.0.0.1:18888`. To go back, remove the 8888 line, run
+`up -d site` again and `docker start tenstorrent-oj-site-1 tenstorrent-oj-worker-1`.
+
 Either way the old deployment's accounts and records do not carry over (it has
 no TT-Lang problems). Merging PR #1 into `main` is independent of this switch:
 a running deployment only changes when somebody rebuilds it from the merged
