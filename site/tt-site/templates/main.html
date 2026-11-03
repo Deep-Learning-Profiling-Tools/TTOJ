@@ -23,17 +23,19 @@
     ['TT2001', 'Metalium · RISC-V integer addition', 'Move data through NoC and add uint32 values in a device kernel.'],
     ['TT2002', 'Metalium · BF16 tile addition', 'Use circular buffers and the Tensix compute pipeline.']
   ] %}
+  {% if task[0] not in (ttHiddenProblems or []) or handler.user.hasPerm(perm.PERM_VIEW_PROBLEM_HIDDEN) %}
   <div class="medium-6 columns"><section class="section">
     <div class="section__header"><h2 class="section__title"><a href="/p/{{ task[0] }}">{{ task[0] }} · {{ _(task[1]) }}</a></h2></div>
     <div class="section__body typo"><p>{{ _(task[2]) }}</p><a href="/p/{{ task[0] }}">{{ _('Open problem') }} →</a></div>
   </section></div>
+  {% endif %}
   {% endfor %}
 </div>
 <div class="row"><div class="columns"><section class="section">
   <div class="section__header"><h2 class="section__title">{{ _('What the measurements mean') }}</h2></div>
   <div class="section__body typo">
     <p>{{ _('Correctness scores and performance measurements are reported separately. Container wall time includes initialization, JIT, transfers, and execution. Repeated host timings and device profiler events have their own scopes.') }}</p>
-    <p>{{ _('Hardware jobs run serially. This private experimental judge expects trusted submissions; TTNN Python results are not proof of hardware execution.') }}</p>
+    <p>{{ _('Up to three submissions are judged at the same time, each on its own Blackhole chip; further submissions wait in a queue.') }}</p>
   </div>
 </section></div></div>
 {% endblock %}

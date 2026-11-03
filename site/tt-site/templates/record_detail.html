@@ -8,6 +8,8 @@
   <div class="medium-9 columns collapsed">
     {% if typeof(rdoc['status']) === 'number' %}
       {% include 'record_detail_status.html' %}
+      {# Hydro's live update replaces both #status and #summary; this page shows its own summary, so the stock one stays hidden. #}
+      <div hidden>{% include 'record_detail_summary.html' %}</div>
     {% endif %}
     {% include 'tt_profile_panel.html' %}
     {% if rdoc['code'] or rdoc.files.code %}

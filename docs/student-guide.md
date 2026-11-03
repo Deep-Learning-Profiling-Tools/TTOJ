@@ -31,9 +31,9 @@ The ragged problems do not pass `lengths`. They pass `valid`, an FP32 tensor wit
 
 Correctness is `|got - want| <= atol + rtol * scale` per element: `atol = 1e-6, rtol = 2^-8` for TT3001 (scale `|a| + |b|`) and TT3002 (scale: sum of `|x|` over the valid prefix), and `atol = 1e-4, rtol = 2^-6` for TT3003 (scale: the reference value). The tolerance is wider than FP32 epsilon because the FPU rounds operands to about 11 significant bits. Each problem has 10 testcases generated from a fixed seed; the statement lists their shapes.
 
-**What the problem page shows.** The statement is on the left. On the right is a code editor preloaded with the starter code (also attached as `starter.py` under the **Files** tab), with the language preset to "Tenstorrent TT-Lang (Python)". Your previous submissions to this problem are listed below the editor. If the split view does not open, click **Open Scratchpad (Alt+E)**. The classic **Submit** page (`/p/TT3001/submit`) also works: paste the code or upload a file.
+**What the problem page shows.** The statement is on the left. On the right is a code editor preloaded with a template that has the required signature and an empty body (also attached as `starter.py` under the **Files** tab), with the language preset to "Tenstorrent TT-Lang (Python)". Your previous submissions to this problem are listed below the editor. If the split view does not open, click **Open Scratchpad (Alt+E)**. The classic **Submit** page (`/p/TT3001/submit`) also works: paste the code or upload a file.
 
-The starters are single-core baselines. The TT3001 and TT3003 starters are correct but slow. The TT3002 starter asserts `W_pad <= 256` and fails the wide testcases until you add chunking.
+The template only fixes the interface: you write the dataflow buffers and the reader, compute and writer kernels yourself, starting from the TT-Lang chapter and the matmul example of the course notes.
 
 ## Submitting and the statuses
 
@@ -47,8 +47,8 @@ The judge runs your file on one Blackhole chip in a container that goes through 
 | Wrong Answer (WA) | An element outside tolerance, wrong output shape, or NaN/Inf. | Padding mishandled, mask missing, masked entries leaking into a sum, overflow in `exp`. |
 | Compile Error (CE) | The file could not be compiled. | A Python syntax error, or a `TTLangCompileError` from the TT-Lang compiler. |
 | Runtime Error (RE) | A Python exception while running, or no result produced. | `AssertionError`, a device error, a transaction that never completes, or a missing operation name. |
-| Time Exceeded (TLE) | A pass exceeded the 180 s wall limit (container start, device initialisation, compilation and all timed calls included). | A kernel that is extremely slow or hangs. |
-| Memory Exceeded / Output Exceeded | More than 8 GiB host memory, or more than 256 KiB of stdout/stderr. | Printing in a loop. |
+| Time Exceeded (TLE) | One testcase ran longer than 180 s, counting its correctness call, warmups and timed calls; the first testcase also includes container start, device initialisation and compilation. | A kernel that is extremely slow or hangs. |
+| Memory Exceeded / Output Exceeded | More than 8 GiB host memory, or more than 512 KiB of stdout/stderr per testcase. | Printing in a loop. |
 
 A submission with some failed testcases gets a partial score and the first failing status; only fully accepted submissions are timed on every case and ranked.
 
@@ -85,7 +85,7 @@ For the lab report, quote the device time as the result and use the counters as 
 
 ## Leaderboard and speedup
 
-`/leaderboard` has one table per problem. Each account appears once with its fastest accepted submission, ranked by **device time**: per testcase, the time from the first kernel start to the last kernel end over all cores, median of 7 instrumented samples; then the geometric mean over the 10 testcases. Host times and wall times are never ranked. *Speedup* is the single-core reference geometric mean divided by yours (about 22.1 µs for TT3001, 68.5 µs for TT3002 and 1100 µs for TT3003); "per testcase" expands the per-case times and speedups. The page does not refresh by itself; use the **Refresh now** link. A submission appears only when every testcase is accepted and has device timing.
+`/leaderboard` has one table per problem. Instructor and test accounts are not ranked. Each account appears once with its fastest accepted submission, ranked by **device time**: per testcase, the time from the first kernel start to the last kernel end over all cores, median of 7 instrumented samples; then the geometric mean over the 10 testcases. Host times and wall times are never ranked. *Speedup* is the single-core reference geometric mean divided by yours (about 22.1 µs for TT3001, 68.5 µs for TT3002 and 1100 µs for TT3003); "per testcase" expands the per-case times and speedups. The page does not refresh by itself; use the **Refresh now** link. A submission appears only when every testcase is accepted and has device timing.
 
 ## The submission limit and tips
 

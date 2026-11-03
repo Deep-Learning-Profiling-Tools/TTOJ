@@ -5,6 +5,8 @@ const { RecordDetailHandler } = require(path.join(path.dirname(require.resolve('
 const PROFILE_ROOT = '/data/tt-profiles';
 // Per-problem submission caps, applied to each account separately (pretests included), from /problems/*/metadata.json.
 const SUBMISSION_LIMITS = new Map();
+// Accounts left off the leaderboard besides staff, e.g. test accounts (usernames, comma separated).
+const UNRANKED_USERS = new Set((process.env.TT_OJ_UNRANKED_USERS || '').split(',').map((name) => name.trim()).filter(Boolean));
 // Leaderboard problems (language ttlang) and their reference solution's per-case device time in µs.
 const LEADERBOARD_PROBLEMS = new Map();
 // Problem id -> folder under /problems (for the starter code shown in the editor).
@@ -154,6 +156,14 @@ function ownerOrStaff(handler, rdoc) {
   return handler.user._id === rdoc.uid || handler.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE);
 }
 
+// The record document as other viewers may receive it (JSON responses and the websocket's raw mode):
+// per-testcase verdicts, scores and times, without messages, judge log, compiler output or code.
+function publicRecord(rdoc) {
+  if (!rdoc || typeof rdoc !== 'object') return rdoc;
+  return { ...rdoc, code: '', judgeTexts: [], compilerTexts: [],
+    testCases: (rdoc.testCases || []).map(({ message, ...rest }) => rest) };
+}
+
 // Everyone else sees only the verdict and device time per testcase (same formatting as the full view).
 function restrictedProfile(view) {
   return {
@@ -292,6 +302,12 @@ async function leaderboardFor(domainId, pdoc, uid = null) {
     const previous = best.get(rdoc.uid);
     if (!previous || summary.geomean_ns < previous.geomean_ns) best.set(rdoc.uid, { ...summary, rid: rdoc._id.toString(), judgeAt: rdoc.judgeAt });
   }
+  // Staff (instructor/admin accounts) and test accounts listed in TT_OJ_UNRANKED_USERS are not ranked.
+  const accounts = await global.Hydro.model.user.getList(domainId, [...best.keys()]);
+  for (const id of [...best.keys()]) {
+    const account = accounts[id];
+    if (account && (account.hasPriv(PRIV.PRIV_READ_RECORD_CODE) || UNRANKED_USERS.has(account.uname))) best.delete(id);
+  }
   const rows = [...best.entries()].map(([uid, summary]) => ({
     uid, rid: summary.rid, judgeAt: summary.judgeAt, geomean_ns: summary.geomean_ns,
     display_geomean_us: formatUs(summary.geomean_ns),
@@ -318,7 +334,7 @@ class TTLeaderboardHandler extends Handler {
     const uids = new Set();
     for (const pid of [...LEADERBOARD_PROBLEMS.keys()].sort()) {
       const pdoc = await problem.get(domainId, pid);
-      if (!pdoc) continue;
+      if (!pdoc || !problem.canViewBy(pdoc, this.user)) continue;
       const board = await leaderboardFor(domainId, pdoc, this.user._id);
       board.title = this.ttProblemTitle ? this.ttProblemTitle(pdoc) : pdoc.title;
       board.rows.forEach((row) => uids.add(row.uid));
@@ -380,6 +396,9 @@ exports.apply = function apply(ctx) {
     const render = handler.renderHTML;
     handler.renderHTML = (name, args) => render(name, name === 'record_detail_status.html' && !ownerOrStaff(handler, args?.rdoc)
       ? { ...args, ttRestricted: true } : args);
+    const send = handler.send.bind(handler);
+    handler.send = (payload) => send(payload && payload.rdoc && !ownerOrStaff(handler, payload.rdoc)
+      ? { ...payload, rdoc: publicRecord(payload.rdoc) } : payload);
   });
   // Block both steps, including existing registration links and administrator sessions.
   // New accounts are created through Hydro's authenticated administration tools.
@@ -450,7 +469,8 @@ exports.apply = function apply(ctx) {
     };
     body.ttTheme = handler.user?.theme === 'dark' ? 'dark' : 'light';
     body.ttLoggedIn = !!handler.user?.hasPriv?.(PRIV.PRIV_USER_PROFILE);
-    if (body.pdoc) {
+    const editing = /^problem_(edit|config|files)/.test(handler.response.template || '');
+    if (body.pdoc && !editing) {
       const oldTitle = body.pdoc.title;
       body.pdoc = localize(body.pdoc);
       if (handler.UiContext.extraTitleContent === oldTitle) handler.UiContext.extraTitleContent = body.pdoc.title;
@@ -466,8 +486,9 @@ exports.apply = function apply(ctx) {
         // LeetCode-style view: statement on the left, editor with the starter on the right, submissions below.
         // problem_detail.html copies handler.user.codeTemplate/codeLang into UiContext for the editor.
         if (isTTLang && handler.user) {
-          if (starter) handler.user.codeTemplate = starter;
-          handler.user.codeLang = 'ttlang';
+          // handler.user is shared through Hydro's user cache; set the editor defaults on a per-request copy.
+          handler.user = Object.assign(Object.create(Object.getPrototypeOf(handler.user)), handler.user,
+            starter ? { codeTemplate: starter, codeLang: 'ttlang' } : { codeLang: 'ttlang' });
         }
         handler.UiContext.ttWorkspace = { auto: isTTLang && body.ttLoggedIn, hasStarter: !!starter, lang: isTTLang ? 'ttlang' : null };
       }
@@ -483,8 +504,13 @@ exports.apply = function apply(ctx) {
           used: board.used, limit: board.limit, is_best: !!own };
       } catch (error) { console.warn('tt-site: rank lookup failed:', error.message); }
     }
+    if (handler.response.template === 'main.html') {
+      // The homepage lists fixed problem cards; drop the ones that are hidden for this viewer.
+      const hidden = await global.Hydro.model.problem.getMulti(handler.args.domainId || 'system', { hidden: true }).project({ pid: 1 }).toArray();
+      body.ttHiddenProblems = hidden.map((pdoc) => pdoc.pid);
+    }
     if (Array.isArray(body.pdocs)) body.pdocs = body.pdocs.map(localize);
-    if (body.pdoc && !handler.response.template?.startsWith('problem_detail')) body.pdoc = localize(body.pdoc);
+    if (body.pdoc && !editing && !handler.response.template?.startsWith('problem_detail')) body.pdoc = localize(body.pdoc);
     if (body.pdict) body.pdict = Object.fromEntries(Object.entries(body.pdict).map(([id, pdoc]) => [id, localize(pdoc)]));
     body.ttEnglish = english;
     body.overrideNav = global.Hydro.ui.getNodes('Nav').filter((item) =>
@@ -492,6 +518,7 @@ exports.apply = function apply(ctx) {
       && (item.name !== 'manage_dashboard' || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)));
     if (handler.response.template === 'record_detail.html' && body.rdoc) {
       body.ttRestricted = !ownerOrStaff(handler, body.rdoc);
+      if (body.ttRestricted) body.rdoc = publicRecord(body.rdoc);
       if (typeof body.rdoc.status === 'number') {
         const profile = loadProfile(body.rdoc._id);
         const view = profile ? displayProfile(profile) : null;

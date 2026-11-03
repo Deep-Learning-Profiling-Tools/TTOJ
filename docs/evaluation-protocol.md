@@ -27,12 +27,13 @@ or lifecycle events are not reconstructed retrospectively.
 | Host synchronized call | ttnn/Metalium: fresh container per case; first correctness/JIT invocation, 5 warmups, 50 timed repeats; profiler disabled. TT-Lang: one container for all cases, profiler enabled; 3 warmups, 7 timed repeats around the invocations whose device cycles are captured | TTNN `solve(a,b)` followed by device synchronization, including allocations inside `solve`; Metalium `EnqueueMeshWorkload` followed by `distributed::Finish` | Container startup, device initialization, first-call JIT, input upload and output download |
 | Device kernel cycles | ttnn/Metalium: separate fresh container per accepted case; profiler enabled; first invocation, 5 warmups, 10 selected repeats. TT-Lang: the same run as correctness and host timing; first invocation, 3 warmups, 7 selected repeats | Official firmware kernel zones, grouped by device/core/RISC and ordered stage occurrence; same-core envelopes | Initial invocation and warmup events are excluded from selected statistics; profiler flush/export is outside kernel cycle intervals |
 
-For the CS540 TT-Lang problems (`ttlang` mode) both recipes apply unchanged to the
-submitted `@ttl.operation` call: the host pass times `operation(inputs..., out)` plus
-device synchronization on preallocated FP32 tile tensors (padding, upload and readback
-excluded). From the device pass the site derives the **device time** of each case:
-per selected sample, first kernel start to last kernel end over all cores and RISCs
-(tt-metal's DEVICE KERNEL DURATION definition), median over the ten samples. NoC event
+For the CS540 TT-Lang problems (`ttlang` mode) one profiled run per testcase
+provides both rows: the host time is `operation(inputs..., out)` plus device
+synchronization on preallocated FP32 tile tensors (padding, upload and readback
+excluded), measured with the profiler on. From the same run the site derives the
+**device time** of each case: per selected sample, first kernel start to last kernel
+end over all cores and RISCs (tt-metal's DEVICE KERNEL DURATION definition), median
+over the seven samples. NoC event
 tracing is left off because it logs every transfer and perturbs kernel time. The
 `/leaderboard` page ranks each account's fastest accepted submission by the geometric
 mean of device time over the testcases; host timings and wall time are never ranked.
@@ -167,9 +168,10 @@ Containers have no network, run as UID/GID 1005, use a read-only root, drop all
 capabilities and cannot access the Docker socket. The per-case bind mount has
 only the submitted source, current input and the required Python wrapper, with
 no expected outputs. Limits are 8 GiB host memory, no extra swap, 512 processes,
-2 GiB writable `/tmp`, combined stdout/stderr capture of 256 KiB, and device CSV
-capture of 64 MiB. Each pass's wall timeout includes all initialization, JIT and
-transfers and is capped at 180 s.
+2 GiB writable `/tmp`, combined stdout/stderr capture of 256 KiB (TT-Lang
+batches: 512 KiB per testcase), and device CSV capture of 64 MiB. Each pass's wall
+timeout includes all initialization, JIT and transfers and is capped at 180 s; a
+TT-Lang batch has 180 s per testcase, enforced per testcase.
 
 ## Attempt identity and lifecycle
 
@@ -330,7 +332,9 @@ independence or remove time drift, thermals and shared-host interference.
 - CPU/IRQ isolation and arbitrary external workload exclusion are not verified.
 - Device frequency is observed, not locked or fully calibrated.
 - Cross-core total device elapsed time has not been calibrated.
-- Instrumented device and uninstrumented host measurements are different passes.
+- For ttnn/Metalium, instrumented device and uninstrumented host measurements are
+  different passes; for TT-Lang both come from the same instrumented run, so host
+  latencies include profiler overhead.
 - First/final checks do not prove every repeat is correct; wrappers are not tamper-attested.
 - Consecutive samples can be correlated. The deterministic bootstrap median
   interval assumes IID samples and is diagnostic, not an accuracy guarantee.
