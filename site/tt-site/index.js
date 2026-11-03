@@ -154,6 +154,14 @@ function ownerOrStaff(handler, rdoc) {
   return handler.user._id === rdoc.uid || handler.user.hasPriv(PRIV.PRIV_READ_RECORD_CODE);
 }
 
+// The record document as other viewers may receive it (JSON responses and the websocket's raw mode):
+// per-testcase verdicts, scores and times, without messages, judge log, compiler output or code.
+function publicRecord(rdoc) {
+  if (!rdoc || typeof rdoc !== 'object') return rdoc;
+  return { ...rdoc, code: '', judgeTexts: [], compilerTexts: [],
+    testCases: (rdoc.testCases || []).map(({ message, ...rest }) => rest) };
+}
+
 // Everyone else sees only the verdict and device time per testcase (same formatting as the full view).
 function restrictedProfile(view) {
   return {
@@ -318,7 +326,7 @@ class TTLeaderboardHandler extends Handler {
     const uids = new Set();
     for (const pid of [...LEADERBOARD_PROBLEMS.keys()].sort()) {
       const pdoc = await problem.get(domainId, pid);
-      if (!pdoc) continue;
+      if (!pdoc || !problem.canViewBy(pdoc, this.user)) continue;
       const board = await leaderboardFor(domainId, pdoc, this.user._id);
       board.title = this.ttProblemTitle ? this.ttProblemTitle(pdoc) : pdoc.title;
       board.rows.forEach((row) => uids.add(row.uid));
@@ -380,6 +388,9 @@ exports.apply = function apply(ctx) {
     const render = handler.renderHTML;
     handler.renderHTML = (name, args) => render(name, name === 'record_detail_status.html' && !ownerOrStaff(handler, args?.rdoc)
       ? { ...args, ttRestricted: true } : args);
+    const send = handler.send.bind(handler);
+    handler.send = (payload) => send(payload && payload.rdoc && !ownerOrStaff(handler, payload.rdoc)
+      ? { ...payload, rdoc: publicRecord(payload.rdoc) } : payload);
   });
   // Block both steps, including existing registration links and administrator sessions.
   // New accounts are created through Hydro's authenticated administration tools.
@@ -450,7 +461,8 @@ exports.apply = function apply(ctx) {
     };
     body.ttTheme = handler.user?.theme === 'dark' ? 'dark' : 'light';
     body.ttLoggedIn = !!handler.user?.hasPriv?.(PRIV.PRIV_USER_PROFILE);
-    if (body.pdoc) {
+    const editing = /^problem_(edit|config|files)/.test(handler.response.template || '');
+    if (body.pdoc && !editing) {
       const oldTitle = body.pdoc.title;
       body.pdoc = localize(body.pdoc);
       if (handler.UiContext.extraTitleContent === oldTitle) handler.UiContext.extraTitleContent = body.pdoc.title;
@@ -466,8 +478,9 @@ exports.apply = function apply(ctx) {
         // LeetCode-style view: statement on the left, editor with the starter on the right, submissions below.
         // problem_detail.html copies handler.user.codeTemplate/codeLang into UiContext for the editor.
         if (isTTLang && handler.user) {
-          if (starter) handler.user.codeTemplate = starter;
-          handler.user.codeLang = 'ttlang';
+          // handler.user is shared through Hydro's user cache; set the editor defaults on a per-request copy.
+          handler.user = Object.assign(Object.create(Object.getPrototypeOf(handler.user)), handler.user,
+            starter ? { codeTemplate: starter, codeLang: 'ttlang' } : { codeLang: 'ttlang' });
         }
         handler.UiContext.ttWorkspace = { auto: isTTLang && body.ttLoggedIn, hasStarter: !!starter, lang: isTTLang ? 'ttlang' : null };
       }
@@ -489,7 +502,7 @@ exports.apply = function apply(ctx) {
       body.ttHiddenProblems = hidden.map((pdoc) => pdoc.pid);
     }
     if (Array.isArray(body.pdocs)) body.pdocs = body.pdocs.map(localize);
-    if (body.pdoc && !handler.response.template?.startsWith('problem_detail')) body.pdoc = localize(body.pdoc);
+    if (body.pdoc && !editing && !handler.response.template?.startsWith('problem_detail')) body.pdoc = localize(body.pdoc);
     if (body.pdict) body.pdict = Object.fromEntries(Object.entries(body.pdict).map(([id, pdoc]) => [id, localize(pdoc)]));
     body.ttEnglish = english;
     body.overrideNav = global.Hydro.ui.getNodes('Nav').filter((item) =>
@@ -497,6 +510,7 @@ exports.apply = function apply(ctx) {
       && (item.name !== 'manage_dashboard' || handler.user.hasPriv(PRIV.PRIV_EDIT_SYSTEM)));
     if (handler.response.template === 'record_detail.html' && body.rdoc) {
       body.ttRestricted = !ownerOrStaff(handler, body.rdoc);
+      if (body.ttRestricted) body.rdoc = publicRecord(body.rdoc);
       if (typeof body.rdoc.status === 'number') {
         const profile = loadProfile(body.rdoc._id);
         const view = profile ? displayProfile(profile) : null;

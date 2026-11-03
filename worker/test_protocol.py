@@ -208,6 +208,18 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(judge.executions), 2, "counters still collected for the accepted case")
         self.verify(report)
 
+    @patch.object(worker, "DEVICE_PROFILER_SUPPORTED", True)
+    async def test_ttlang_run_ending_between_testcases_is_not_accepted(self):
+        # Testcases 1-2 finish, then the wrapper exits before testcase 3 starts: no partial-score AC.
+        task = {**TASK, "lang": "ttlang", "code": "import ttl\ndef vector_add(a, b, out):\n    pass\n"}
+        judge = FakeJudge([batch_outcome({1: "pass", 2: "pass"}), batch_outcome({1: "pass", 2: "pass"})])
+        judge.manifest = lambda t: asyncio.sleep(0, result=(copy.deepcopy(TTLANG_MANIFEST), json.dumps(TTLANG_MANIFEST).encode()))
+        await judge.judge(task)
+        report = self.report()
+        self.assertEqual([case["status"] for case in report["cases"]], [worker.AC, worker.AC, worker.RE])
+        self.assertEqual(report["final"]["status"], worker.RE)
+        self.verify(report)
+
     async def test_all_case_verdicts_persist(self):
         for expected, value in [(worker.AC, outcome()), (worker.WA, outcome(actual="2")),
                                 (worker.RE, outcome(worker.RE)), (worker.TLE, outcome(worker.TLE)),

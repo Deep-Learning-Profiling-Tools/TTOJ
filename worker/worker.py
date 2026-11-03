@@ -590,13 +590,17 @@ class Judge:
                 if finished - completed:
                     completed |= finished
                     if progress:
-                        await progress(len(completed & set(ids)), len(ids))
+                        try:
+                            await progress(len(completed & set(ids)), len(ids))
+                        except Exception as error:  # a lost progress message must not abort the judging
+                            log.warning("progress update for record %s failed: %s", rid, error)
                 current = started[-1] if started else None
                 if current not in finished and not execution.expire_requested:
                     if time.monotonic() - first_seen.get(current, loop_started) > per_case_timeout:
                         attempt.event("case_timeout", case_id=current, pass_name=pass_name, limit_s=per_case_timeout)
                         execution.expire()
-        except asyncio.CancelledError:
+        except BaseException:
+            # Stop the container before the caller releases its chip, whatever interrupted the loop.
             running.cancel()
             with contextlib.suppress(BaseException):
                 await running
@@ -683,8 +687,9 @@ class Judge:
                     await self.send(rid, "next", compilerText=error_text[-10000:])
             elif len(lines) > 1:
                 status, message, comparison = RE, "Program produced more than one result for this testcase.", "duplicate_result_marker"
-            elif index in started or (index == 1 and not started):
-                # The container ended while this testcase was running (or before the first one started).
+            else:
+                # The container ended while this testcase was running, or before it started. Earlier failures
+                # that stop the run (CE/RE/TLE/MLE/OLE) break out of this loop before reaching it.
                 status = outcome["status"] or RE
                 if status == TLE:
                     message = f"Exceeded the {timeout:g}s per-testcase wall limit including JIT; container terminated."
@@ -698,8 +703,6 @@ class Judge:
                     if status == CE:
                         await self.send(rid, "next", compilerText=full_log[-10000:])
                 comparison = "no_result_marker"
-            else:
-                break  # an earlier testcase ended the run; this one was never started
             profile_case["correctness"]["host_comparison"] = comparison
             wall_ns = payload.get("wall_ns") if payload else None
             wall_ms = round(wall_ns / 1e6, 2) if type(wall_ns) in (int, float) and math.isfinite(wall_ns) and wall_ns >= 0 else outcome["time"]
@@ -874,7 +877,13 @@ class Judge:
                     await end(CE, "python_syntax_error", compilerText=str(error))
                     return
                 attempt.event("syntax_check_passed")
-            images = {name: self.docker.images.get(image) for name, image in RUNTIME_IMAGES.items()}
+            images = {}
+            for name, image in RUNTIME_IMAGES.items():
+                try:
+                    images[name] = self.docker.images.get(image)
+                except docker.errors.ImageNotFound:
+                    if name == image_family(mode):
+                        raise  # the image this submission needs; other families may be absent
             report["environment"]["image_ids"] = {name: image.id for name, image in images.items()}
             report["environment"]["image_repo_digests"] = {name: image.attrs.get("RepoDigests", []) for name, image in images.items()}
             task["_runtime_image_id"] = images[image_family(mode)].id
@@ -938,8 +947,8 @@ class Judge:
                     active = None
                 status, message = outcome["status"], ""
                 full_log = outcome["stderr"] + "\n" + outcome["stdout"]
-                compile_failure = (mode == "ttlang" and re.search(r"TTLangCompileError|^error: ", full_log, re.M)) or (
-                    mode not in PYTHON_MODES and re.search(r"(?:error:|Build failed|compilation failed|JIT compilation|CompileError)", full_log, re.I))
+                compile_failure = mode not in PYTHON_MODES and re.search(
+                    r"(?:error:|Build failed|compilation failed|JIT compilation|CompileError)", full_log, re.I)
                 if status == RE and compile_failure:
                     status = CE
                     await self.send(rid, "next", compilerText=full_log[-10000:])
@@ -963,11 +972,6 @@ class Judge:
                         except (ValueError, TypeError) as error:
                             status, message = RE, f"Invalid result format: {error}"
                             profile_case["correctness"]["host_comparison"] = "invalid_result_format"
-                if mode == "ttlang" and status in (AC, WA):
-                    # The TT-Lang wrapper compares against the reference itself; surface its one-line summary.
-                    details = [line[len(DETAIL_MARKER):] for line in outcome["stdout"].splitlines() if line.startswith(DETAIL_MARKER)]
-                    if len(details) == 1:
-                        message += " " + details[0][:1000]
                 if status in (RE, CE) and not message:
                     message = full_log[-4000:]
                 if status == TLE:
@@ -1037,35 +1041,6 @@ class Judge:
                                   comparison=profile_case["correctness"]["device_comparison"], capture_valid=device_profile.get("valid", False))
                 profile_case["device"] = device_profile
                 counters_profile = {"available": False, "reason": "skipped_non_accepted_case" if status != AC else "not_collected"}
-                if status == AC and DEVICE_PROFILER_SUPPORTED and mode == "ttlang":
-                    await self.send(rid, "next", message=f"Case {index}: reading hardware performance counters.")
-                    attempt.event("pass_prepare_started", case_id=index, pass_name="counters")
-                    active = await self.prepare_execution(attempt.private / f"{index}-counters", task, manifest, case, profiling=True, counters=True, attempt=attempt, chips=chips)
-                    try:
-                        diagnostic = await self.run_execution(active, timeout)
-                    finally:
-                        active = None
-                    filename = attempt.write_csv(index, diagnostic["profiler_csv"], kind="counters") if diagnostic.get("profiler_csv") else None
-                    if diagnostic["status"] is None and filename:
-                        capture_lines = [line[len(PROFILE_MARKER):] for line in diagnostic["stdout"].splitlines() if line.startswith(PROFILE_MARKER)]
-                        diagnostic_results = [line[len(MARKER):] for line in diagnostic["stdout"].splitlines() if line.startswith(MARKER)]
-                        try:
-                            metadata = json.loads(capture_lines[0]) if len(capture_lines) == 1 else {}
-                            correct = len(diagnostic_results) == 1 and (case["output"] is None or compare_numbers(
-                                json.loads(diagnostic_results[0]), json.loads(case["output"]), manifest.get("atol", 0), manifest.get("rtol", 0)))
-                            if not correct:
-                                raise ValueError("Counter pass result failed correctness validation")
-                            parsed = parse_perf_counters(diagnostic["profiler_csv"], COUNTER_MASK, capture=metadata.get("counter_capture"))
-                            counters_profile = {key: parsed.get(key) for key in ("available", "valid", "mask", "groups", "clock_mhz", "cores",
-                                                                                 "windows_decoded", "window_us_median", "counters", "errors", "notes")}
-                            counters_profile["summary"] = summarize_counters(parsed)
-                            counters_profile["capture"] = metadata.get("counter_capture")
-                        except (ValueError, TypeError, KeyError) as error:
-                            counters_profile = {"available": False, "valid": False, "reason": str(error)}
-                        counters_profile["artifacts"] = [filename]
-                    else:
-                        counters_profile = {"available": False, "valid": False, "reason": "counter_pass_failed_or_no_csv", "diagnostic_status": diagnostic["status"]}
-                    attempt.event("pass_completed", case_id=index, pass_name="counters", status=diagnostic["status"], counters_valid=counters_profile.get("valid", False))
                 profile_case["counters"] = counters_profile
                 host_recipe_matches = not host_profile.get("available") or (host_profile.get("warmup_count") == self.policy["host"]["warmup_count"] and host_profile.get("sample_count") == self.policy["host"]["sample_count"])
                 capture = device_profile.get("capture", {})
