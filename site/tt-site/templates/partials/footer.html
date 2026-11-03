@@ -114,9 +114,12 @@
     if (toggle) { toggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode'; toggle.setAttribute('data-theme', theme); }
     try {
       localStorage.setItem('tt-theme', theme);
-      // The Monaco editor in the workspace reads its options from editor.config.
+      // The Monaco editor in the workspace reads its options from editor.config. Hydro only accepts ids from
+      // its monaco-themes list (it fetches /monaco/themes/<label>.json); an unknown id such as Monaco's own
+      // 'vs-dark' makes it fetch undefined.json and the editor never finishes loading. Light mode leaves the
+      // theme unset, which is Hydro's default light editor. Rewritten on every page load, so stale values heal.
       var config = JSON.parse(localStorage.getItem('editor.config') || '{}');
-      config.theme = theme === 'dark' ? 'vs-dark' : 'vs-light';
+      if (theme === 'dark') config.theme = 'github-dark'; else delete config.theme;
       localStorage.setItem('editor.config', JSON.stringify(config));
     } catch (e) { /* storage blocked */ }
   }
